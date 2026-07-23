@@ -1,4 +1,7 @@
-# Keil
+# =========================
+# Keil Build Files
+# =========================
+
 *.axf
 *.bak
 *.hex
@@ -7,13 +10,34 @@
 *.lst
 *.o
 *.d
+*.crf
+*.htm
+*.dep
+*.lnp
 
 Objects/
 Listings/
 
-# VSCode
-.vscode/
 
-# User files
+# =========================
+# Keil User Settings
+# =========================
+
 *.uvguix.*
 *.uvprojx.user
+
+
+# =========================
+# VSCode
+# =========================
+
+.vscode/
+
+
+# =========================
+# Temporary Files
+# =========================
+
+*.tmp
+*.log
+*.swp

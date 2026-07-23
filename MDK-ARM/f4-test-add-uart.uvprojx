@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>fromelf--bin--output./f4-test/Objects/f4-test.bin./f4-test/Objects/f4-test.axf;../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\Drivers\BSP</IncludePath>
+              <IncludePath>fromelf--bin--output./f4-test/Objects/f4-test.bin./f4-test/Objects/f4-test.axf;../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;..\Drivers\BSP;..\Drivers\BSP\boot_flash;..\Drivers\BSP\boot_cache</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -478,6 +478,16 @@
               <FileName>int_bootloader.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\BSP\int_bootloader.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\BSP\boot_flash\boot_flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_cache.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\BSP\boot_cache\boot_cache.c</FilePath>
             </File>
           </Files>
         </Group>

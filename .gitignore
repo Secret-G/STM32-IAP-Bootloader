@@ -1,0 +1,19 @@
+# Keil
+*.axf
+*.bak
+*.hex
+*.bin
+*.map
+*.lst
+*.o
+*.d
+
+Objects/
+Listings/
+
+# VSCode
+.vscode/
+
+# User files
+*.uvguix.*
+*.uvprojx.user

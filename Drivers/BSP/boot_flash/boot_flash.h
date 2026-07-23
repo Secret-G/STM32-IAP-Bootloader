@@ -43,7 +43,10 @@ uint32_t Flash_GetSector(uint32_t addr);
 
 HAL_StatusTypeDef Flash_EraseSector(uint32_t sector);
 
+HAL_StatusTypeDef Flash_EraseApp(void);
+
 HAL_StatusTypeDef Flash_Write(uint32_t addr,uint8_t *data,uint32_t len);
+
 
 
 

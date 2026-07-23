@@ -74,6 +74,30 @@ HAL_StatusTypeDef Flash_EraseSector(uint32_t sector)
     return status;
 }
 
+HAL_StatusTypeDef Flash_EraseApp(void)
+{
+    FLASH_EraseInitTypeDef erase_init = {0};
+    HAL_StatusTypeDef status;
+    uint32_t sector_error;
+
+    status = HAL_FLASH_Unlock();
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    erase_init.TypeErase = FLASH_TYPEERASE_SECTORS;
+    erase_init.Sector = FLASH_SECTOR_4;
+    erase_init.NbSectors = FLASH_SECTOR_11 - FLASH_SECTOR_4 + 1U;
+    erase_init.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+
+    status = HAL_FLASHEx_Erase(&erase_init, &sector_error);
+
+    HAL_FLASH_Lock();
+
+    return status;
+}
+
 HAL_StatusTypeDef Flash_Write(uint32_t addr,
                               uint8_t *data,
                               uint32_t len)
@@ -143,3 +167,4 @@ HAL_StatusTypeDef Flash_Write(uint32_t addr,
 
     return status;
 }
+

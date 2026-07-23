@@ -8,10 +8,19 @@ volatile uint32_t uart_total_len = 0U;
 
 void bootloader_init(void)
 {
+    HAL_StatusTypeDef status;
+
     uart_rx_ready = 0U;
     uart_total_len = 0U;
 
     BootCache_Init();
+
+    status = Flash_EraseApp();
+    if (status != HAL_OK)
+    {
+        uart_rx_ready = 2U;
+        return;
+    }
 
     __HAL_UART_CLEAR_IDLEFLAG(&huart1);
     __HAL_UART_CLEAR_OREFLAG(&huart1);

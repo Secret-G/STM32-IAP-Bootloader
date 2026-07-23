@@ -7,43 +7,11 @@
  */
 static uint8_t flash_cache[4] = {0};
 static uint8_t flash_cache_len = 0U;
-static uint8_t sector_erase_flag[FLASH_SECTOR_NUM] = {0};
 static uint32_t flash_write_addr = APP_START_ADDR;
-
-static HAL_StatusTypeDef BootCache_PrepareSector(void)
-{
-    uint32_t sector;
-    HAL_StatusTypeDef status;
-
-    sector = Flash_GetSector(flash_write_addr);
-    if (sector == INVALID_SECTOR)
-    {
-        return HAL_ERROR;
-    }
-
-    if (sector_erase_flag[sector] != 0U)
-    {
-        return HAL_OK;
-    }
-
-    status = Flash_EraseSector(sector);
-    if (status == HAL_OK)
-    {
-        sector_erase_flag[sector] = 1U;
-    }
-
-    return status;
-}
 
 static HAL_StatusTypeDef BootCache_WriteWord(uint8_t data[4])
 {
     HAL_StatusTypeDef status;
-
-    status = BootCache_PrepareSector();
-    if (status != HAL_OK)
-    {
-        return status;
-    }
 
     status = Flash_Write(flash_write_addr, data, 4U);
     if (status == HAL_OK)
@@ -57,7 +25,6 @@ static HAL_StatusTypeDef BootCache_WriteWord(uint8_t data[4])
 void BootCache_Init(void)
 {
     memset(flash_cache, 0, sizeof(flash_cache));
-    memset(sector_erase_flag, 0, sizeof(sector_erase_flag));
 
     flash_cache_len = 0U;
     flash_write_addr = APP_START_ADDR;

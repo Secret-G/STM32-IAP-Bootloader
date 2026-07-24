@@ -17,4 +17,6 @@ extern volatile uint32_t uart_total_len;
 
 void bootloader_init(void);
 
+
+void boot_loder_jump_to_app(void);
 #endif

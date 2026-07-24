@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "int_bootloader.h"
+#include "key.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -100,18 +101,18 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    led_toggle();
-    HAL_Delay(300);
-		
-		
-		
-		
-		
+    led_on();
+    
     if (uart_rx_ready)
     {
         uart_rx_ready = 0U;
 
         printf(" uart_total_len: %d\r\n", uart_total_len);
+    }
+    if (Key_Scan() == KEY0_PRESSED)
+    {
+        printf("KEY0 pressed, start jump\r\n");
+        boot_loder_jump_to_app();
     }
   }
   /* USER CODE END 3 */

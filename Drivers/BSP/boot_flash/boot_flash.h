@@ -24,13 +24,29 @@
 #define FLASH_SECTOR_11_ADDR     (FLASH_BASE_ADDR + 0xE0000U)
 
 
-/* APP */
-#define APP_START_ADDR           FLASH_SECTOR_4_ADDR
-#define APP_END_ADDR             FLASH_END_ADDR
-
 /* Bootloader */
-#define BOOTLOADER_START_ADDR    FLASH_SECTOR_0_ADDR
-#define BOOTLOADER_END_ADDR      (APP_START_ADDR - 1U)
+#define BOOTLOADER_START_ADDR   FLASH_SECTOR_0_ADDR
+#define BOOTLOADER_END_ADDR     (FLASH_SECTOR_4_ADDR - 1U)
+
+
+/* Flag */
+#define FLAG_START_ADDR         FLASH_SECTOR_4_ADDR
+#define FLAG_END_ADDR           (FLASH_SECTOR_5_ADDR - 1U)
+
+
+/* Run APP */
+#define APP_RUN_ADDR            FLASH_SECTOR_5_ADDR
+#define APP_RUN_END_ADDR        (FLASH_SECTOR_7_ADDR - 1U)
+
+
+/* APP A */
+#define APP_A_ADDR              FLASH_SECTOR_7_ADDR
+#define APP_A_END_ADDR          (FLASH_SECTOR_9_ADDR - 1U)
+
+
+/* APP B */
+#define APP_B_ADDR              FLASH_SECTOR_9_ADDR
+#define APP_B_END_ADDR          (FLASH_SECTOR_11_ADDR - 1U)
 
 
 #define INVALID_SECTOR 0xFFFFFFFFU
@@ -42,8 +58,6 @@
 uint32_t Flash_GetSector(uint32_t addr);
 
 HAL_StatusTypeDef Flash_EraseSector(uint32_t sector);
-
-HAL_StatusTypeDef Flash_EraseApp(void);
 
 HAL_StatusTypeDef Flash_Write(uint32_t addr,uint8_t *data,uint32_t len);
 

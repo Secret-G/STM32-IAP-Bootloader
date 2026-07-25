@@ -7,7 +7,7 @@
  */
 static uint8_t flash_cache[4] = {0};
 static uint8_t flash_cache_len = 0U;
-static uint32_t flash_write_addr = APP_START_ADDR;
+static uint32_t flash_write_addr = 0U;
 
 static HAL_StatusTypeDef BootCache_WriteWord(uint8_t data[4])
 {
@@ -22,12 +22,13 @@ static HAL_StatusTypeDef BootCache_WriteWord(uint8_t data[4])
     return status;
 }
 
-void BootCache_Init(void)
+void BootCache_Init(uint32_t start_addr)
 {
     memset(flash_cache, 0, sizeof(flash_cache));
 
     flash_cache_len = 0U;
-    flash_write_addr = APP_START_ADDR;
+	
+    flash_write_addr = start_addr;
 }
 
 HAL_StatusTypeDef Boot_WriteCache(const uint8_t *data, uint32_t len)

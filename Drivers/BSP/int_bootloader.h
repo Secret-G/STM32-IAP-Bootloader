@@ -6,17 +6,25 @@
 
 #define PACKET_DATA_SIZE 256U
 
-/*
- * uart_rx_ready:
- * 0 = 没有新的处理结果
- * 1 = 本次数据写入成功
- * 2 = 擦除或写入失败
- */
+typedef enum
+{
+    BOOT_WAIT_COMMAND = 0,
+    BOOT_ERASING,
+    BOOT_RECEIVE_A,
+    BOOT_RECEIVE_B,
+    BOOT_FINISHING,
+    BOOT_RECEIVE_ERROR
+
+} Boot_ReceiveStateTypeDef;
+
 extern volatile uint8_t uart_rx_ready;
 extern volatile uint32_t uart_total_len;
 
 void bootloader_init(void);
 
+void Bootloader_Process(void);
 
-void boot_loder_jump_to_app(void);
+void Boot_JumpToApp(void);
+HAL_StatusTypeDef Boot_CopyToRun(uint32_t source_addr, uint32_t image_size);
+
 #endif

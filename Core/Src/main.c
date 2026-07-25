@@ -35,6 +35,8 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
+#define APP_A_TEST_SIZE  5528U
+#define APP_B_TEST_SIZE  5528U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,7 +47,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -67,7 +68,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  KeyValue_t key_value;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -103,16 +104,51 @@ int main(void)
 
     led_on();
     
-    if (uart_rx_ready)
-    {
-        uart_rx_ready = 0U;
+    Bootloader_Process();
 
-        printf(" uart_total_len: %d\r\n", uart_total_len);
-    }
-    if (Key_Scan() == KEY0_PRESSED)
+    key_value = Key_Scan();
+
+    if (key_value == KEY0_PRESSED)
     {
-        printf("KEY0 pressed, start jump\r\n");
-        boot_loder_jump_to_app();
+        printf("COPY_A_START\r\n");
+
+        if (Boot_CopyToRun(APP_A_ADDR,
+                          APP_A_TEST_SIZE) == HAL_OK)
+        {
+            printf("COPY_A_OK:%lu\r\n",
+                  (uint32_t)APP_A_TEST_SIZE);
+
+            HAL_Delay(100U);
+
+            Boot_JumpToApp();
+
+            printf("JUMP_A_FAILED\r\n");
+        }
+        else
+        {
+            printf("COPY_A_FAILED\r\n");
+        }
+    }
+    else if (key_value == KEY1_PRESSED)
+    {
+        printf("COPY_B_START\r\n");
+
+        if (Boot_CopyToRun(APP_B_ADDR,
+                          APP_B_TEST_SIZE) == HAL_OK)
+        {
+            printf("COPY_B_OK:%lu\r\n",
+                  (uint32_t)APP_B_TEST_SIZE);
+
+            HAL_Delay(100U);
+
+            Boot_JumpToApp();
+
+            printf("JUMP_B_FAILED\r\n");
+        }
+        else
+        {
+            printf("COPY_B_FAILED\r\n");
+        }
     }
   }
   /* USER CODE END 3 */

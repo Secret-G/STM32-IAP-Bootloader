@@ -6,7 +6,7 @@
 /*
  * 初始化4字节缓存、APP写入地址和扇区擦除记录。
  */
-void BootCache_Init(void);
+void BootCache_Init(uint32_t start_addr);
 
 /*
  * 接收任意长度数据，内部每攒够4字节写入一次Flash。

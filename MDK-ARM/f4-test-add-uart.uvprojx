@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>fromelf--bin--output./f4-test/Objects/f4-test.bin./f4-test/Objects/f4-test.axf;../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Drivers/BSP;../Drivers/BSP/boot_flash;../Drivers/BSP/boot_cache;../Drivers/BSP/KEY</IncludePath>
+              <IncludePath>fromelf--bin--output./f4-test/Objects/f4-test.bin./f4-test/Objects/f4-test.axf;../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Drivers/BSP;../Drivers/BSP/boot_flash;../Drivers/BSP/boot_cache;../Drivers/BSP/KEY;..\Drivers\BSP\boot_protocol;..\Drivers\BSP\boot_crc</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -493,6 +493,16 @@
               <FileName>key.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Drivers\BSP\KEY\key.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\BSP\boot_protocol\boot_protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_crc.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Drivers\BSP\boot_crc\boot_crc.c</FilePath>
             </File>
           </Files>
         </Group>

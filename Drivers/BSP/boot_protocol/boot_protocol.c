@@ -42,6 +42,7 @@ uint16_t Boot_GetDataLength(uint16_t total_len)
 
     return total_len - BOOT_FRAME_FIXED_SIZE;
 }
+
 uint32_t Boot_ParseReserve(uint8_t *frame, uint16_t total_len)
 {
     uint32_t reserve;
@@ -496,4 +497,83 @@ uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context, uint8_t **frame, uint16_
     *frame_len = context->expected_len;
 
     return 1U;
+}
+
+
+uint16_t Boot_BuildResponseFrame(
+    uint8_t *frame,
+    uint16_t frame_size,
+    Boot_CmdTypeDef response_cmd,
+    Boot_CmdTypeDef request_cmd,
+    Boot_ResultTypeDef result,
+    uint32_t value)
+{
+    uint16_t crc;
+    uint16_t offset;
+
+    /*
+     * 检查输出数组地址和容量。
+     */
+    if ((frame == NULL) || (frame_size < BOOT_RESPONSE_FRAME_SIZE))
+    {
+        return 0U;
+    }
+
+    /*
+     * 只允许构造ACK或者NACK。
+     */
+    if ((response_cmd != CMD_ACK) && (response_cmd != CMD_NACK))
+    {
+        return 0U;
+    }
+
+    /*
+     * frame[0～1]：应答命令，小端格式。
+     */
+    frame[0] = (uint8_t)((uint16_t)response_cmd & 0x00FFU);
+    frame[1] = (uint8_t)(((uint16_t)response_cmd >> 8U) & 0x00FFU);
+
+    /*
+     * frame[2～3]：应答帧总长度14，小端格式。
+     */
+    frame[2] =(uint8_t)(BOOT_RESPONSE_FRAME_SIZE & 0x00FFU);
+    frame[3] = (uint8_t)((BOOT_RESPONSE_FRAME_SIZE >> 8U) & 0x00FFU);
+
+    /*
+     * DATA[0～1]：原始请求命令。
+     */
+    offset = BOOT_FRAME_DATA_OFFSET + BOOT_RESPONSE_REQUEST_CMD_OFFSET;
+    frame[offset] = (uint8_t)((uint16_t)request_cmd & 0x00FFU);
+    frame[offset + 1U] =(uint8_t)(((uint16_t)request_cmd >> 8U) & 0x00FFU);
+
+    /*
+     * DATA[2～3]：处理结果码。
+     */
+    offset = BOOT_FRAME_DATA_OFFSET + BOOT_RESPONSE_RESULT_OFFSET;
+
+    frame[offset] = (uint8_t)((uint16_t)result & 0x00FFU);
+    frame[offset + 1U] = (uint8_t)(((uint16_t)result >> 8U) & 0x00FFU);
+
+    /*
+     * frame[8～11]：RESERVE附加值，
+     * 按照uint32_t小端格式保存。
+     */
+    frame[8] = (uint8_t)(value & 0x000000FFUL);
+    frame[9] = (uint8_t)((value >> 8U) & 0x000000FFUL);
+    frame[10] = (uint8_t)((value >> 16U) & 0x000000FFUL);
+    frame[11] = (uint8_t)((value >> 24U) & 0x000000FFUL);
+
+    /*
+     * 应答CRC覆盖前12字节，
+     * 不包含最后2字节CRC字段本身。
+     */
+    crc = Boot_CRC16_Modbus(frame,BOOT_RESPONSE_FRAME_SIZE - BOOT_FRAME_CRC_SIZE);
+
+    /*
+     * frame[12～13]：应答帧CRC，小端格式。
+     */
+    frame[12] =(uint8_t)(crc & 0x00FFU);
+    frame[13] =(uint8_t)((crc >> 8U) & 0x00FFU);
+
+    return BOOT_RESPONSE_FRAME_SIZE;
 }

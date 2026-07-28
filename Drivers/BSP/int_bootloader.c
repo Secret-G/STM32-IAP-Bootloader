@@ -6,6 +6,7 @@
 #define BOOT_COPY_BUFFER_SIZE  256U /*复制缓冲区大小*/
 
 static uint8_t boot_copy_buffer[BOOT_COPY_BUFFER_SIZE] = {0};
+
 static uint8_t uart_rec_buff[PACKET_DATA_SIZE] = {0};
 
 /*
@@ -350,9 +351,59 @@ static void Boot_ProtocolReceiveRestart(void)
     HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff, PACKET_DATA_SIZE);
 }
 
+
+
+/**
+ * @brief 构造并发送一张ACK/NACK应答帧。
+ *
+ * @param response_cmd 应答类型，只能是CMD_ACK或CMD_NACK。
+ * @param request_cmd  本次应答对应的原始请求命令。
+ * @param result       请求处理结果。
+ * @param value        附加信息，例如包序号或期望包序号。
+ *
+ * @return HAL_OK表示发送成功，其余表示构造或发送失败。
+ */
+static HAL_StatusTypeDef Boot_SendResponse(
+    Boot_CmdTypeDef response_cmd,
+    Boot_CmdTypeDef request_cmd,
+    Boot_ResultTypeDef result,
+    uint32_t value)
+{
+    uint8_t response_frame[BOOT_RESPONSE_FRAME_SIZE];
+    uint16_t response_len;
+
+    /*
+     * 根据应答内容构造完整的14字节协议帧。
+     */
+    response_len = Boot_BuildResponseFrame(
+        response_frame,
+        sizeof(response_frame),
+        response_cmd,
+        request_cmd,
+        result,
+        value);
+
+    /*
+     * 返回0说明参数错误，应答帧构造失败。
+     */
+    if (response_len == 0U)
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 当前函数在主循环中执行，不在UART中断中执行，
+     * 因此这里可以暂时使用阻塞发送。
+     */
+    return HAL_UART_Transmit(
+        &huart1,
+        response_frame,
+        response_len,
+        100U);
+}
+
 /**
  * @brief 处理一张START升级帧。
- *
  * @param frame     完整协议帧地址。
  * @param frame_len 完整协议帧长度。
  */
@@ -370,6 +421,14 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     if (Boot_ParseStartFrame(frame, frame_len, &start_info) == 0U)
     {
         printf("START_FRAME_ERROR\r\n");
+    /*
+     * START帧长度、内容或者CRC错误。
+     */
+    (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_START_UPDATE,
+        BOOT_RESULT_FRAME_ERROR,
+        0U);
         return;
     }
 
@@ -385,6 +444,16 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     if (protocol_update_state == BOOT_RECEIVE)
     {
         printf("UPDATE_BUSY\r\n");
+    /*
+     * 当前状态不允许再次执行START。
+     * value返回当前升级状态。
+     */
+    (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_START_UPDATE,
+        BOOT_RESULT_STATE_ERROR,
+        (uint32_t)protocol_update_state);
+
         return;
     }
 
@@ -412,6 +481,15 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
         (start_info.image_size > run_region_size))
     {
         printf("IMAGE_TOO_LARGE\r\n");
+        /*
+     * START声明的文件超过Flash区域容量。
+     * value返回上位机声明的文件大小。
+     */
+    (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_START_UPDATE,
+        BOOT_RESULT_IMAGE_TOO_LARGE,
+        start_info.image_size);
         return;
     }
 
@@ -436,6 +514,15 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("ERASING_FAILED\r\n");
+        /*
+        * A区或者B区擦除失败。
+        * value返回HAL状态码。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_FLASH_ERROR,
+            (uint32_t)status);
 
         return;
     }
@@ -464,14 +551,24 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     {
         printf("RECEIVE_B\r\n");
     }
-    printf("START_UPDATE_OK\r\n");
 
+    printf("START_UPDATE_OK\r\n");
     printf("READY_SIZE:%lu\r\n", (unsigned long)protocol_update_info.image_size);
+    /*
+    * START处理成功。
+    *
+    * value返回本次升级目标：
+    * 1表示A区，2表示B区。
+    */
+    (void)Boot_SendResponse(
+        CMD_ACK,
+        CMD_START_UPDATE,
+        BOOT_RESULT_OK,
+        (uint32_t)protocol_update_info.target);
 }
 
 /**
  * @brief 处理一张DATA固件数据帧。
- *
  * @param frame     完整协议帧地址。
  * @param frame_len 完整协议帧长度。
  */
@@ -485,6 +582,12 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     if(protocol_update_state != BOOT_RECEIVE)
     {
         printf("DATA_without_start\r\n");
+
+    (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_STATE_ERROR,
+        (uint32_t)protocol_update_state);
         return;
     }
 
@@ -495,6 +598,11 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     if (Boot_ParseDataFrame(frame, frame_len, &data_info) == 0U)
     {
         printf("DATA_FRAME_ERROR\r\n");
+        (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_FRAME_ERROR,
+        0U);
         return;
     }
     /*
@@ -507,6 +615,16 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
         printf("SEQUENCE_ERROR\r\n");
         printf("EXPECTED:%lu\r\n",(unsigned long)protocol_expected_sequence);
         printf("RECEIVED:%lu\r\n",(unsigned long)data_info.sequence);
+
+       /*
+        * value返回Bootloader当前期望的包序号。
+        * 上位机可以据此重发正确的数据包。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_DATA_PACKET,
+            BOOT_RESULT_SEQUENCE_ERROR,
+            protocol_expected_sequence);
         return;
     }
 
@@ -517,6 +635,12 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("RECEIVED_SIZE_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_IMAGE_SIZE_ERROR,
+        protocol_received_size);
         return;
     }
 
@@ -532,6 +656,12 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     {
         printf("DATA_TOO_LARGE\r\n");
         printf("REMAINING:%lu\r\n", (unsigned long)remaining_size);
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_DATA_PACKET,
+            BOOT_RESULT_DATA_TOO_LARGE,
+            remaining_size);
         return;
     }
     
@@ -546,6 +676,13 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("FLASH_WRITE_FAILED\r\n");
+
+        (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_FLASH_ERROR,
+        data_info.sequence);
+
         return;
     }
 
@@ -560,13 +697,21 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
     printf("DATA_LEN:%u\r\n",(unsigned int)data_info.data_len);
     printf("RECEIVED_SIZE:%lu\r\n",(unsigned long)protocol_received_size);
 
+    /*
+    * 只有数据成功写入Flash、计数和期望序号更新后，
+    * 才向上位机发送ACK。
+    *
+    * value返回刚刚成功写入的数据包序号。
+    */
+    (void)Boot_SendResponse(
+        CMD_ACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_OK,
+        data_info.sequence);
 }
 
 /**
  * @brief 处理一张END升级结束帧。
- *
- * @param frame     完整协议帧地址。
- * @param frame_len 完整协议帧长度。
  */
 static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
 {
@@ -582,6 +727,13 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     if (protocol_update_state != BOOT_RECEIVE)
     {
         printf("END_WITHOUT_START\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            (uint32_t)protocol_update_state);
+
         return;
     }
 
@@ -592,6 +744,12 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     if (Boot_ParseEndFrame(frame, frame_len, &packet_count) == 0U)
     {
         printf("END_FRAME_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_FRAME_ERROR,
+            0U);
         return;
     }
 
@@ -610,6 +768,15 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         printf("PACKET_COUNT_ERROR\r\n");
         printf("EXPECTED_PACKETS:%lu\r\n",(unsigned long) protocol_expected_sequence);
         printf("RECEIVED_PACKETS:%lu\r\n",(unsigned long) packet_count);
+
+        /*
+        * value返回Bootloader实际成功接收的包数。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_PACKET_COUNT_ERROR,
+            protocol_expected_sequence);
         return;
     }
 
@@ -622,7 +789,16 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         printf("IMAGE_SIZE_ERROR\r\n");
         printf("EXPECTED_SIZE:%lu\r\n", (unsigned long) protocol_update_info.image_size);
         printf("RECEIVED_SIZE:%lu\r\n", (unsigned long) protocol_received_size);
-        return;
+
+        /*
+        * value返回实际接收到的BIN字节数。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_IMAGE_SIZE_ERROR,
+            protocol_received_size);
+            return;
     }
     printf("IMAGE_SIZE_OK\r\n");
 
@@ -643,6 +819,12 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("FLUSH_CACHE_FAILED\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_FLASH_ERROR,
+            (uint32_t)status);
         return;
     }
 
@@ -662,6 +844,11 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("UPDATE_TARGET_ERROR\r\n");
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            (uint32_t)protocol_update_info.target);
         return;
     }
 
@@ -684,6 +871,15 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     {
         protocol_update_state = BOOT_ERROR;
         printf("IMAGE_CRC_ERROR\r\n");
+
+        /*
+        * value的低16位返回实际计算出的固件CRC。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_IMAGE_CRC_ERROR,
+            (uint32_t)calculated_image_crc);
         return;
     }
 
@@ -693,6 +889,16 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     protocol_update_state = BOOT_READY;
     printf("IMAGE_CRC_OK\r\n");
     printf("UPDATE_READY\r\n");
+
+    /*
+    * 固件大小、包数和整个BIN CRC全部正确。
+    * value返回成功接收的DATA总包数。
+    */
+    (void)Boot_SendResponse(
+        CMD_ACK,
+        CMD_END_UPDATE,
+        BOOT_RESULT_OK,
+        protocol_expected_sequence);
 }
 
 /**
@@ -745,6 +951,17 @@ static void Boot_ProcessProtocolFrame(void)
 
         default:
             printf("UNKNOWN_CMD:0x%04X\r\n",(unsigned int)cmd);
+            /*
+            * 收到当前Bootloader不支持的命令。
+            *
+            * request_cmd保留上位机发送的原始命令，
+            * 方便上位机确认是哪一条命令不被支持。
+            */
+            (void)Boot_SendResponse(
+                CMD_NACK,
+                (Boot_CmdTypeDef)cmd,
+                BOOT_RESULT_UNKNOWN_CMD,
+                0U);
             break;
     }
 
@@ -753,6 +970,7 @@ static void Boot_ProcessProtocolFrame(void)
      */
     Boot_ProtocolReceiveRestart();
 }
+
 
 void Bootloader_Process(void)
 {
@@ -775,8 +993,9 @@ void Bootloader_Process(void)
     }
 }
 
+
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
-{
+{{
     Boot_RxResultTypeDef result;
     uint16_t i;
 
@@ -825,4 +1044,4 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
 
         HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff,PACKET_DATA_SIZE);
     }
-}
+}}

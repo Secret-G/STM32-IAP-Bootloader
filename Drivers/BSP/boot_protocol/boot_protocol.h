@@ -50,8 +50,6 @@
  */
 #define BOOT_FRAME_DATA_OFFSET         4U 
 
-
-
 /*
  * 只有收到CMD和TOTAL_LEN以后，
  * 才能知道当前完整协议帧应该有多长。
@@ -139,6 +137,42 @@
 
 
 /*
+ * ACK/NACK应答帧的DATA布局：
+ *
+ * DATA[0～1]：原始请求命令，小端
+ * DATA[2～3]：处理结果码，小端
+ *
+ * RESERVE字段：
+ * 根据不同命令返回包序号、期望序号或总包数。
+ */
+
+/*
+ * 应答帧DATA固定为4字节。
+ */
+#define BOOT_RESPONSE_DATA_SIZE            4U   //应答帧DATA固定为4字节。
+
+/*
+ * 应答帧总长度：
+ * 固定字段10字节 + DATA 4字节 = 14字节。
+ */
+#define BOOT_RESPONSE_FRAME_SIZE           \
+    (BOOT_FRAME_FIXED_SIZE +               \
+     BOOT_RESPONSE_DATA_SIZE)
+
+/*
+ * 原始请求CMD在应答DATA中的相对偏移。
+ * DATA[0～1]，对应完整帧frame[4～5]。
+ */
+#define BOOT_RESPONSE_REQUEST_CMD_OFFSET    0U
+
+/*
+ * 结果码在应答DATA中的相对偏移。
+ * DATA[2～3]，对应完整帧frame[6～7]。
+ */
+#define BOOT_RESPONSE_RESULT_OFFSET         2U
+
+
+/*
  * 协议帧接收器的处理结果。
  */
 typedef enum
@@ -161,8 +195,74 @@ typedef enum
     CMD_DATA_PACKET = 0x0003,
     CMD_END_UPDATE = 0x0004,
     CMD_CHECK_UPDATE = 0x0005,
-    CMD_JUMP_APP = 0x0006
+    CMD_JUMP_APP = 0x0006,
+    CMD_ACK          = 0x8000,
+    CMD_NACK         = 0x8001
 }Boot_CmdTypeDef;
+
+/*
+ * ACK/NACK应答中的处理结果码。
+ */
+typedef enum
+{
+    /*
+     * 请求处理成功，只用于ACK。
+     */
+    BOOT_RESULT_OK = 0x0000,
+
+    /*
+     * 协议帧长度、CMD或者帧CRC错误。
+     */
+    BOOT_RESULT_FRAME_ERROR = 0x0001,
+
+    /*
+     * 当前升级状态不允许处理该命令。
+     * 例如没有START就发送DATA或END。
+     */
+    BOOT_RESULT_STATE_ERROR = 0x0002,
+
+    /*
+     * START声明的BIN文件超过目标区域容量。
+     */
+    BOOT_RESULT_IMAGE_TOO_LARGE = 0x0003,
+
+    /*
+     * DATA包序号与期望序号不一致。
+     */
+    BOOT_RESULT_SEQUENCE_ERROR = 0x0004,
+
+    /*
+     * DATA内容超过START声明的剩余文件长度。
+     */
+    BOOT_RESULT_DATA_TOO_LARGE = 0x0005,
+
+    /*
+     * Flash擦除、写入或者缓存刷新失败。
+     */
+    BOOT_RESULT_FLASH_ERROR = 0x0006,
+
+    /*
+     * END声明的DATA总包数不正确。
+     */
+    BOOT_RESULT_PACKET_COUNT_ERROR = 0x0007,
+
+    /*
+     * 实际接收字节数与START声明的文件大小不一致。
+     */
+    BOOT_RESULT_IMAGE_SIZE_ERROR = 0x0008,
+
+    /*
+     * Flash中的整个BIN CRC校验失败。
+     */
+    BOOT_RESULT_IMAGE_CRC_ERROR = 0x0009,
+
+    /*
+     * 收到了当前Bootloader不支持的CMD。
+     */
+    BOOT_RESULT_UNKNOWN_CMD = 0x000A
+
+} Boot_ResultTypeDef;
+
 
 typedef enum
 {
@@ -349,11 +449,7 @@ uint32_t Boot_ParseStartImageSize(uint8_t *frame);
  */
 uint16_t Boot_ParseStartImageCRC(uint8_t *frame);
 
-
-uint8_t Boot_ParseStartFrame(
-    uint8_t *frame,
-    uint16_t received_len,
-    Boot_StartInfoTypeDef *start_info);
+uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfoTypeDef *start_info);
 
 /**
  * @brief 检查并解析一张完整的DATA数据帧
@@ -364,11 +460,7 @@ uint8_t Boot_ParseStartFrame(
  *
  * @return 1表示解析成功，0表示DATA帧非法。
  */
-uint8_t Boot_ParseDataFrame(
-    uint8_t *frame,
-    uint16_t received_len,
-    Boot_DataInfoTypeDef *data_info);
-
+uint8_t Boot_ParseDataFrame(uint8_t *frame,uint16_t received_len,Boot_DataInfoTypeDef *data_info);
 
 /**
  * @brief 检查并解析一张END结束帧。
@@ -379,12 +471,7 @@ uint8_t Boot_ParseDataFrame(
  *
  * @return 1表示解析成功，0表示END帧非法。
  */
-uint8_t Boot_ParseEndFrame(
-    uint8_t *frame,
-    uint16_t received_len,
-    uint32_t *packet_count);
-
-
+uint8_t Boot_ParseEndFrame(uint8_t *frame,uint16_t received_len,uint32_t *packet_count);
 
 /**
  * @brief 初始化或者复位协议帧接收器。
@@ -420,10 +507,31 @@ Boot_RxResultTypeDef Boot_RxInputByte(
  *
  * @return 1表示存在完整帧，0表示完整帧尚未准备好。
  */
-uint8_t Boot_RxGetFrame(
-    Boot_RxContextTypeDef *context,
-    uint8_t **frame,
-    uint16_t *frame_len);
+uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context,uint8_t **frame, uint16_t *frame_len);
+
+/**
+ * @brief 组装一张ACK或者NACK应答帧。
+ *
+ * 应答帧固定为14字节：
+ * CMD(2) + LEN(2) + DATA(4)
+ * + RESERVE(4) + CRC(2)。
+ *
+ * @param frame        用于保存应答帧的数组。
+ * @param frame_size   应答数组的实际容量。
+ * @param response_cmd CMD_ACK或者CMD_NACK。
+ * @param request_cmd  本次应答对应的原始请求CMD。
+ * @param result       请求处理结果码。
+ * @param value        RESERVE附加值，例如包序号。
+ *
+ * @return 成功返回应答帧长度14，失败返回0。
+ */
+uint16_t Boot_BuildResponseFrame(
+    uint8_t *frame,
+    uint16_t frame_size,
+    Boot_CmdTypeDef response_cmd,
+    Boot_CmdTypeDef request_cmd,
+    Boot_ResultTypeDef result,
+    uint32_t value);
     
 #endif
 

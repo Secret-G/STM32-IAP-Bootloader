@@ -1,8 +1,7 @@
 #include "boot_crc.h"
 #include "stdio.h"
 
-uint16_t Boot_CRC16_Modbus(const uint8_t *data,
-                           uint32_t length)
+uint16_t Boot_CRC16_Modbus(const uint8_t *data, uint32_t length)
 {
     uint16_t crc = 0xFFFFU;
     uint32_t i;

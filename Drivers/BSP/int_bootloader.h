@@ -6,19 +6,6 @@
 
 #define PACKET_DATA_SIZE 256U
 
-typedef enum
-{
-    BOOT_WAIT_COMMAND = 0,
-    BOOT_ERASING,
-    BOOT_RECEIVE_A,
-    BOOT_RECEIVE_B,
-    BOOT_FINISHING,
-    BOOT_RECEIVE_ERROR
-
-} Boot_ReceiveStateTypeDef;
-
-extern volatile uint8_t uart_rx_ready;
-extern volatile uint32_t uart_total_len;
 
 void bootloader_init(void);
 

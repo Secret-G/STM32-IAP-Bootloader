@@ -1,48 +1,78 @@
 #include "int_bootloader.h"
 #include "boot_protocol.h"
+#include "boot_crc.h"
 #include <string.h>
 
-
-
-#define BOOT_SELECT_HEADER_1    0x55U
-#define BOOT_SELECT_HEADER_2    0xAAU
-
-#define BOOT_SELECT_APP_A       0x01U
-#define BOOT_SELECT_APP_B       0x02U
-
-#define BOOT_SELECT_CMD_SIZE    3U
 #define BOOT_COPY_BUFFER_SIZE  256U /*复制缓冲区大小*/
 
 static uint8_t boot_copy_buffer[BOOT_COPY_BUFFER_SIZE] = {0};
 static uint8_t uart_rec_buff[PACKET_DATA_SIZE] = {0};
 
-static uint32_t update_addr = 0U;       /*当前更新地址*/
-static uint32_t update_end_addr = 0U; /*当前更新结束地址*/
+/*
+ * 协议帧接收器。
+ * 用于跨多次UART回调拼接一张完整协议帧。
+ */
+static Boot_RxContextTypeDef protocol_rx_context;
 
-static volatile uint32_t update_last_rx_tick = 0U; 
-static volatile uint8_t update_has_data = 0U;
+/*
+ * 完整协议帧等待主循环处理标志。
+ * 在UART中断中置1，在主循环处理完成后清0。
+ */
+static volatile uint8_t protocol_frame_pending = 0U;
 
-static Update_TargetTypeDef update_target = UPDATE_NONE;
+/*
+ * 当前协议升级状态。
+ */
+static Boot_StateTypeDef protocol_update_state = BOOT_IDLE;
 
-static volatile Boot_ReceiveStateTypeDef boot_receive_state = BOOT_WAIT_COMMAND;
+/*
+ * 保存当前START帧提供的升级信息。
+ */
+static Boot_StartInfoTypeDef protocol_update_info =
+{
+    UPDATE_NONE,
+    0U,
+    0U
+};
 
-static volatile Update_TargetTypeDef pending_target =UPDATE_NONE;
+/*
+ * 当前已经成功写入目标区的BIN字节数。
+ */
+static uint32_t protocol_received_size = 0U;
 
-volatile uint8_t uart_rx_ready = 0U;
-volatile uint32_t uart_total_len = 0U;
+/*
+ * 下一张DATA帧应该携带的包序号。
+ * 第一包从0开始。
+ */
+static uint32_t protocol_expected_sequence = 0U;
+
+
+/*
+ * 协议接收过程发生长度错误标志。
+ */
+static volatile uint8_t protocol_rx_error_pending = 0U;
 
 typedef void (*app_func_t)(void);
 
+
 void bootloader_init(void)
 {
-    uart_rx_ready = 0U;
-    uart_total_len = 0U;
 
-    update_addr = 0U;
-    update_target = UPDATE_NONE;
-    pending_target = UPDATE_NONE;
+    /*初始化帧接收器*/
+    Boot_RxInit(&protocol_rx_context);
 
-    boot_receive_state = BOOT_WAIT_COMMAND;
+    protocol_rx_error_pending = 0;
+    protocol_frame_pending = 0;
+
+    protocol_update_state = BOOT_IDLE;
+
+    protocol_update_info.target = UPDATE_NONE;
+    protocol_update_info.image_size = 0U;
+    protocol_update_info.image_crc = 0U;
+
+    protocol_received_size = 0U;
+    protocol_expected_sequence = 0U;
+
 
     memset(uart_rec_buff, 0, sizeof(uart_rec_buff));
 
@@ -52,7 +82,7 @@ void bootloader_init(void)
     HAL_UARTEx_ReceiveToIdle_IT(&huart1,
                                uart_rec_buff,
                                PACKET_DATA_SIZE);
-
+    
     printf("WAIT_COMMAND\r\n");
 }
 
@@ -254,6 +284,7 @@ HAL_StatusTypeDef Boot_CopyToRun(uint32_t source_addr, uint32_t image_size)
 static HAL_StatusTypeDef Boot_StartUpdate(Update_TargetTypeDef target)
 {
     HAL_StatusTypeDef status;
+    uint32_t start_addr;
 
     switch(target)
     {
@@ -270,8 +301,7 @@ static HAL_StatusTypeDef Boot_StartUpdate(Update_TargetTypeDef target)
                 return status;
             }
 
-            update_addr = APP_A_ADDR;
-            update_end_addr = APP_A_END_ADDR;
+            start_addr = APP_A_ADDR;
             break;
 
         case UPDATE_APP_B:
@@ -287,125 +317,468 @@ static HAL_StatusTypeDef Boot_StartUpdate(Update_TargetTypeDef target)
                 return status;
             }
 
-            update_addr = APP_B_ADDR;
-            update_end_addr = APP_B_END_ADDR;
+            start_addr = APP_B_ADDR;
             break;
 
         default:
             return HAL_ERROR;
     }
 
-    BootCache_Init(update_addr);
-
-    update_target = target;
-
-    uart_total_len = 0;
-    uart_rx_ready = 0;
-
-    update_has_data = 0;
-    update_last_rx_tick = 0;
-
+    BootCache_Init(start_addr);
     return HAL_OK;
 }
 
-void Bootloader_Process(void)
+/**
+ * @brief 结束当前协议帧处理，重新开启UART接收。
+ */
+static void Boot_ProtocolReceiveRestart(void)
 {
-    Update_TargetTypeDef target;
-    HAL_StatusTypeDef status;
-    uint32_t finished_size;
+    /*
+     * 清除当前完整帧的接收进度。
+     */
+    Boot_RxInit(&protocol_rx_context);
 
     /*
-     * 处理A/B选择请求。
+     * 当前完整帧已经处理完毕。
      */
-    if (pending_target != UPDATE_NONE)
+    protocol_frame_pending = 0U;
+    memset(uart_rec_buff,0,sizeof(uart_rec_buff));
+
+    /*
+     * 重新开启UART空闲中断接收。
+     */
+    HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff, PACKET_DATA_SIZE);
+}
+
+/**
+ * @brief 处理一张START升级帧。
+ *
+ * @param frame     完整协议帧地址。
+ * @param frame_len 完整协议帧长度。
+ */
+static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
+{
+    Boot_StartInfoTypeDef start_info;
+    HAL_StatusTypeDef status;
+
+    uint32_t target_region_size;
+    uint32_t run_region_size;
+
+    /*
+     * 检查START帧的长度、CRC和DATA内容。
+     */
+    if (Boot_ParseStartFrame(frame, frame_len, &start_info) == 0U)
     {
-        target = pending_target;
-        pending_target = UPDATE_NONE;
+        printf("START_FRAME_ERROR\r\n");
+        return;
+    }
 
-        status = Boot_StartUpdate(target);
+    printf("START_FRAME_OK\r\n");
+    printf("TARGET:%u\r\n",          (unsigned int)start_info.target);
+    printf("IMAGE_SIZE:%lu\r\n",(unsigned long)start_info.image_size);
+    printf("IMAGE_CRC:0x%04X\r\n",(unsigned int)start_info.image_crc);
 
-        if (status != HAL_OK)
-        {
-            boot_receive_state =
-                BOOT_RECEIVE_ERROR;
+    /*
+     * 当前已经处于升级接收状态，
+     * 不允许再次执行START擦除。
+     */
+    if (protocol_update_state == BOOT_RECEIVE)
+    {
+        printf("UPDATE_BUSY\r\n");
+        return;
+    }
 
-            uart_rx_ready = 2U;
+    /*
+     * 根据目标计算A区或者B区容量。
+     */
+    if (start_info.target == UPDATE_APP_A)
+    {
+        target_region_size = APP_A_END_ADDR - APP_A_ADDR + 1U;
+    }
+    else
+    {
+        target_region_size = APP_B_END_ADDR - APP_B_ADDR + 1U;
+    }
 
-            printf("ERASE_FAILED\r\n");
-            return;
-        }
+    /*
+     * 计算运行区容量。
+     */
+    run_region_size = APP_RUN_END_ADDR - APP_RUN_ADDR + 1U;
 
-        if (target == UPDATE_APP_A)
-        {
-            boot_receive_state = BOOT_RECEIVE_A;
+    /*
+     * BIN文件不能超过存储区和运行区。
+     */
+    if ((start_info.image_size > target_region_size) ||
+        (start_info.image_size > run_region_size))
+    {
+        printf("IMAGE_TOO_LARGE\r\n");
+        return;
+    }
 
-            printf("READY_A\r\n");
-        }
-        else if (target == UPDATE_APP_B)
-        {
-            boot_receive_state = BOOT_RECEIVE_B;
+    /*
+     * 准备开始擦除目标区。
+     */
+    if (start_info.target == UPDATE_APP_A)
+    {
+        printf("ERASING_A\r\n");
+    }
+    else
+    {
+        printf("ERASING_B\r\n");
+    }
 
-            printf("READY_B\r\n");
-        }
+    /*
+     * 擦除目标区并初始化Flash写入缓存。
+     */
+    status = Boot_StartUpdate(start_info.target);
+
+    if (status != HAL_OK)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("ERASING_FAILED\r\n");
 
         return;
     }
 
     /*
-     * 已经收到数据，并且500ms没有新数据，
-     * 判定BIN文件发送完成。
+     * 擦除成功，保存START帧中的升级信息。
      */
-    if (((boot_receive_state == BOOT_RECEIVE_A) ||
-         (boot_receive_state == BOOT_RECEIVE_B)) &&
-        (update_has_data != 0U) &&
-        ((HAL_GetTick() - update_last_rx_tick) >=
-         500U))
+    protocol_update_info = start_info;
+    protocol_update_state = BOOT_RECEIVE;
+
+    /*
+    * 新升级开始，接收计数和包序号从0开始。
+    */
+    protocol_received_size = 0U;
+    protocol_expected_sequence = 0U;
+
+
+    /*
+     * 进入对应的A/B接收状态。
+     */
+    if (start_info.target == UPDATE_APP_A)
     {
+        printf("RECEIVE_A\r\n");
+    }
+    else
+    {
+        printf("RECEIVE_B\r\n");
+    }
+    printf("START_UPDATE_OK\r\n");
+
+    printf("READY_SIZE:%lu\r\n", (unsigned long)protocol_update_info.image_size);
+}
+
+/**
+ * @brief 处理一张DATA固件数据帧。
+ *
+ * @param frame     完整协议帧地址。
+ * @param frame_len 完整协议帧长度。
+ */
+static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
+{
+    Boot_DataInfoTypeDef data_info;
+    HAL_StatusTypeDef status;
+
+    uint32_t remaining_size;
+
+    if(protocol_update_state != BOOT_RECEIVE)
+    {
+        printf("DATA_without_start\r\n");
+        return;
+    }
+
         /*
-         * 先改变状态，防止继续写入。
-         */
-        boot_receive_state = BOOT_FINISHING;
+     * 检查DATA帧的长度、CMD和帧CRC，
+     * 并解析数据地址、数据长度和包序号。
+     */
+    if (Boot_ParseDataFrame(frame, frame_len, &data_info) == 0U)
+    {
+        printf("DATA_FRAME_ERROR\r\n");
+        return;
+    }
+    /*
+     * 检查当前数据包序号。
+     *
+     * 第一包必须是0，成功后期望序号加1。
+     */
+    if (data_info.sequence != protocol_expected_sequence)
+    {
+        printf("SEQUENCE_ERROR\r\n");
+        printf("EXPECTED:%lu\r\n",(unsigned long)protocol_expected_sequence);
+        printf("RECEIVED:%lu\r\n",(unsigned long)data_info.sequence);
+        return;
+    }
 
-        finished_size = uart_total_len;
+     /*
+     * 防止减法发生无符号下溢。
+     */
+    if (protocol_received_size > protocol_update_info.image_size)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("RECEIVED_SIZE_ERROR\r\n");
+        return;
+    }
 
-        status = Boot_FlushCache();
+    /*
+     * 计算当前固件还剩多少字节没有接收。
+     */
+    remaining_size = protocol_update_info.image_size - protocol_received_size;
 
-        if (status == HAL_OK)
-        {
-            printf("UPDATE_FINISH:%lu\r\n",
-                   finished_size);
+    /*
+     * 当前DATA包不能超过START声明的文件大小。
+     */
+    if ((uint32_t)data_info.data_len > remaining_size)
+    {
+        printf("DATA_TOO_LARGE\r\n");
+        printf("REMAINING:%lu\r\n", (unsigned long)remaining_size);
+        return;
+    }
+    
+    /*
+     * 将当前DATA中的BIN数据送进4字节Flash缓存。
+     *
+     * data_info.data指向frame中的DATA起始地址，
+     * data_info.data_len是本包真实BIN字节数。
+     */
+    status = Boot_WriteCache(data_info.data,data_info.data_len);
+    if (status != HAL_OK)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("FLASH_WRITE_FAILED\r\n");
+        return;
+    }
 
-            uart_rx_ready = 1U;
-        }
-        else
-        {
-            printf("FLUSH_FAILED\r\n");
+    /*
+     * Flash写入成功后再更新计数。
+     */
+    protocol_received_size += data_info.data_len;
+    protocol_expected_sequence++;
 
-            uart_rx_ready = 2U;
-        }
+    printf("DATA_FRAME_OK\r\n");
+    printf("SEQ:%lu\r\n",(unsigned long)data_info.sequence);
+    printf("DATA_LEN:%u\r\n",(unsigned int)data_info.data_len);
+    printf("RECEIVED_SIZE:%lu\r\n",(unsigned long)protocol_received_size);
 
-        update_target = UPDATE_NONE;
+}
 
-        update_addr = 0U;
-        update_end_addr = 0U;
+/**
+ * @brief 处理一张END升级结束帧。
+ *
+ * @param frame     完整协议帧地址。
+ * @param frame_len 完整协议帧长度。
+ */
+static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
+{
+    HAL_StatusTypeDef status;
+    uint32_t packet_count;
+    uint32_t image_addr;
+    uint16_t calculated_image_crc;
 
-        update_last_rx_tick = 0U;
-        update_has_data = 0U;
+    /*
+     * 必须先成功处理START，
+     * 并处于DATA接收状态，才允许处理END。
+     */
+    if (protocol_update_state != BOOT_RECEIVE)
+    {
+        printf("END_WITHOUT_START\r\n");
+        return;
+    }
 
-        /*
-         * 重新等待下一次A/B命令。
-         */
-        boot_receive_state = BOOT_WAIT_COMMAND;
+    /*
+     * 检查END帧的CMD、长度和帧CRC，
+     * 并从RESERVE字段解析总包数。
+     */
+    if (Boot_ParseEndFrame(frame, frame_len, &packet_count) == 0U)
+    {
+        printf("END_FRAME_ERROR\r\n");
+        return;
+    }
 
-        printf("WAIT_COMMAND\r\n");
+    printf("END_FRAME_OK\r\n");
+
+    printf("PACKET_COUNT:%lu\r\n",(unsigned long)packet_count);
+
+    /*
+     * protocol_expected_sequence从0开始，
+     * 每成功接收一包就加1。
+     *
+     * 因此它当前也等于已经成功接收的总包数。
+     */
+    if (packet_count != protocol_expected_sequence)
+    {
+        printf("PACKET_COUNT_ERROR\r\n");
+        printf("EXPECTED_PACKETS:%lu\r\n",(unsigned long) protocol_expected_sequence);
+        printf("RECEIVED_PACKETS:%lu\r\n",(unsigned long) packet_count);
+        return;
+    }
+
+    /*
+     * 实际接收的BIN字节数必须等于
+     * START帧声明的整个文件大小。
+     */
+    if (protocol_received_size != protocol_update_info.image_size)
+    {
+        printf("IMAGE_SIZE_ERROR\r\n");
+        printf("EXPECTED_SIZE:%lu\r\n", (unsigned long) protocol_update_info.image_size);
+        printf("RECEIVED_SIZE:%lu\r\n", (unsigned long) protocol_received_size);
+        return;
+    }
+    printf("IMAGE_SIZE_OK\r\n");
+
+    /*
+     * 包数和文件大小均正确，
+     * 开始进行最终固件检查。
+     */
+    protocol_update_state = BOOT_CHECK;
+
+    /*
+     * 如果整个BIN长度不是4的倍数，
+     * 把缓存中最后1～3字节补0xFF并写入Flash。
+     * 如果缓存刚好为空，本函数直接返回HAL_OK。
+     */
+    status = Boot_FlushCache();
+
+    if (status != HAL_OK)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("FLUSH_CACHE_FAILED\r\n");
+        return;
+    }
+
+    /*
+     * 根据START帧中的目标，
+     * 确定刚接收的固件位于A区还是B区。
+     */
+    if (protocol_update_info.target == UPDATE_APP_A)
+    {
+        image_addr = APP_A_ADDR;
+    }
+    else if (protocol_update_info.target == UPDATE_APP_B)
+    {
+        image_addr = APP_B_ADDR;
+    }
+    else
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("UPDATE_TARGET_ERROR\r\n");
+        return;
+    }
+
+    /*
+     * 直接读取Flash中的真实BIN数据，
+     * 重新计算整个文件的Modbus CRC16。
+     *
+     * 这里只计算真实image_size字节，
+     * 不计算最后补齐的0xFF。
+     */
+    calculated_image_crc =Boot_CRC16_Modbus((const uint8_t *)image_addr, protocol_update_info.image_size);
+
+    printf("EXPECTED_IMAGE_CRC:0x%04X\r\n",(unsigned int) protocol_update_info.image_crc);
+    printf("CALCULATED_IMAGE_CRC:0x%04X\r\n",(unsigned int) calculated_image_crc);
+
+    /*
+     * 与START帧中上位机提供的整个BIN CRC比较。
+     */
+    if (calculated_image_crc != protocol_update_info.image_crc)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("IMAGE_CRC_ERROR\r\n");
+        return;
+    }
+
+    /*
+     * 整个升级文件校验成功。
+     */
+    protocol_update_state = BOOT_READY;
+    printf("IMAGE_CRC_OK\r\n");
+    printf("UPDATE_READY\r\n");
+}
+
+/**
+ * @brief 获取并处理一张完整协议帧。
+ */
+static void Boot_ProcessProtocolFrame(void)
+{
+    uint8_t *frame;
+    uint16_t frame_len;
+    uint16_t cmd;
+
+    frame = NULL;
+    frame_len = 0U;
+
+    /*
+     * 从协议接收器获取完整帧,获取到frame里面去。
+     */
+    if (Boot_RxGetFrame(&protocol_rx_context, &frame, &frame_len) == 0U)
+    {
+        printf("GET_FRAME_FAILED\r\n");
+        Boot_ProtocolReceiveRestart();
+        return;
+    }
+
+    /*
+     * 读取当前协议帧的CMD。
+     */
+    cmd = Boot_ParseCmd(frame);
+
+    printf("FRAME_READY\r\n");
+    printf("CMD:0x%04X\r\n",(unsigned int)cmd);
+    printf("LEN:%u\r\n",(unsigned int)frame_len);
+
+    /*
+     * 根据CMD将协议帧分发给对应处理函数。
+     */
+    switch ((Boot_CmdTypeDef)cmd)
+    {
+        case CMD_START_UPDATE:
+            Boot_HandleStartFrame(frame, frame_len);
+            break;
+
+        case CMD_DATA_PACKET:
+            Boot_HandleDataFrame(frame, frame_len);
+            break;
+
+        case CMD_END_UPDATE:
+            Boot_HandleEndFrame(frame, frame_len);
+            break;
+
+        default:
+            printf("UNKNOWN_CMD:0x%04X\r\n",(unsigned int)cmd);
+            break;
+    }
+
+    /*
+     * 当前协议帧处理完成，重新开启UART接收。
+     */
+    Boot_ProtocolReceiveRestart();
+}
+
+void Bootloader_Process(void)
+{
+    /*
+     * 处理UART拼帧错误。
+     */
+    if (protocol_rx_error_pending != 0U)
+    {
+        protocol_rx_error_pending = 0U;
+
+        printf("PROTOCOL_RX_ERROR\r\n");
+    }
+
+    /*
+     * 处理已经接收完成的协议帧。
+     */
+    if (protocol_frame_pending != 0U)
+    {
+        Boot_ProcessProtocolFrame();
     }
 }
 
-void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,
-                                uint16_t Size)
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
 {
-    HAL_StatusTypeDef status;
-    uint32_t region_size;
+    Boot_RxResultTypeDef result;
+    uint16_t i;
 
     if ((huart == NULL) ||
         (huart->Instance != USART1))
@@ -414,92 +787,42 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,
     }
 
     /*
-     * 等待命令状态：
-     * 只识别55 AA 01和55 AA 02。
+     * 将本次UART收到的Size个字节，
+     * 逐个送入协议帧接收器。
      */
-    if (boot_receive_state == BOOT_WAIT_COMMAND)
+    for (i = 0U; i < Size; i++)
     {
-        if ((Size == BOOT_SELECT_CMD_SIZE) &&
-            (uart_rec_buff[0] ==
-                BOOT_SELECT_HEADER_1) &&
-            (uart_rec_buff[1] ==
-                BOOT_SELECT_HEADER_2))
+        result = Boot_RxInputByte(&protocol_rx_context, uart_rec_buff[i]);
+
+        /*
+         * 前4字节中的TOTAL_LEN非法。
+         */
+        if (result == BOOT_RX_FRAME_ERROR)
         {
-            if (uart_rec_buff[2] ==
-                BOOT_SELECT_APP_A)
-            {
-                pending_target = UPDATE_APP_A;
-                boot_receive_state = BOOT_ERASING;
-            }
-            else if (uart_rec_buff[2] ==
-                     BOOT_SELECT_APP_B)
-            {
-                pending_target = UPDATE_APP_B;
-                boot_receive_state = BOOT_ERASING;
-            }
+            protocol_rx_error_pending = 1U;
+            break;
+        }
+
+        /*
+         * 已经接收到一张完整协议帧。
+         */
+        if (result == BOOT_RX_FRAME_READY)
+        {
+            protocol_frame_pending = 1U;
+            break;
         }
     }
+
     /*
-     * 接收A/B原始BIN。
+     * 没有完整帧时继续接收。
+     *
+     * 如果完整帧已经就绪，就暂时停止重新接收，
+     * 等Bootloader_Process处理完成后再开启。
      */
-    else if ((boot_receive_state == BOOT_RECEIVE_A) ||
-             (boot_receive_state == BOOT_RECEIVE_B))
+    if (protocol_frame_pending == 0U)
     {
-        if (Size > 0U)
-        {
-            region_size =
-                update_end_addr - update_addr + 1U;
+        memset(uart_rec_buff,0,sizeof(uart_rec_buff));
 
-            /*
-             * 防止BIN超过A/B区域。
-             */
-            if ((uart_total_len > region_size) ||
-                ((uint32_t)Size >
-                 (region_size - uart_total_len)))
-            {
-                boot_receive_state =
-                    BOOT_RECEIVE_ERROR;
-
-                uart_rx_ready = 2U;
-
-                printf("IMAGE_TOO_LARGE\r\n");
-            }
-            else
-            {
-                /*
-                 * 当前处于接收模式，
-                 * 所有收到的字节都作为BIN数据写入。
-                 */
-                status = Boot_WriteCache(
-                    uart_rec_buff,
-                    Size);
-
-                if (status == HAL_OK)
-                {
-                    uart_total_len += Size;
-
-                    update_last_rx_tick =
-                        HAL_GetTick();
-
-                    update_has_data = 1U;
-                    uart_rx_ready = 1U;
-                }
-                else
-                {
-                    boot_receive_state =
-                        BOOT_RECEIVE_ERROR;
-
-                    uart_rx_ready = 2U;
-
-                    printf("FLASH_WRITE_FAILED\r\n");
-                }
-            }
-        }
+        HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff,PACKET_DATA_SIZE);
     }
-
-    memset(uart_rec_buff, 0, sizeof(uart_rec_buff));
-
-    HAL_UARTEx_ReceiveToIdle_IT(&huart1,
-                               uart_rec_buff,
-                               PACKET_DATA_SIZE);
 }

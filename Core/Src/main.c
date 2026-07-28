@@ -112,11 +112,9 @@ int main(void)
     {
         printf("COPY_A_START\r\n");
 
-        if (Boot_CopyToRun(APP_A_ADDR,
-                          APP_A_TEST_SIZE) == HAL_OK)
+        if (Boot_CopyToRun(APP_A_ADDR,APP_A_TEST_SIZE) == HAL_OK)
         {
-            printf("COPY_A_OK:%lu\r\n",
-                  (uint32_t)APP_A_TEST_SIZE);
+            printf("COPY_A_OK:%lu\r\n",(uint32_t)APP_A_TEST_SIZE);
 
             HAL_Delay(100U);
 

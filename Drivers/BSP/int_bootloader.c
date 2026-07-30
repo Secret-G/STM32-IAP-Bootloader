@@ -7,7 +7,7 @@
 
 static uint8_t boot_copy_buffer[BOOT_COPY_BUFFER_SIZE] = {0};
 
-static uint8_t uart_rec_buff[PACKET_DATA_SIZE] = {0};
+static uint8_t uart_rec_buff[BOOT_FRAME_MAX_SIZE] = {0};
 
 /*
  * 协议帧接收器。
@@ -82,7 +82,7 @@ void bootloader_init(void)
 
     HAL_UARTEx_ReceiveToIdle_IT(&huart1,
                                uart_rec_buff,
-                               PACKET_DATA_SIZE);
+                               BOOT_FRAME_MAX_SIZE);
     
     printf("WAIT_COMMAND\r\n");
 }
@@ -348,7 +348,7 @@ static void Boot_ProtocolReceiveRestart(void)
     /*
      * 重新开启UART空闲中断接收。
      */
-    HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff, PACKET_DATA_SIZE);
+    HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff, BOOT_FRAME_MAX_SIZE);
 }
 
 

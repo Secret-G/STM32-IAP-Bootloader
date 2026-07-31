@@ -450,7 +450,7 @@ Boot_RxResultTypeDef Boot_RxInputByte(Boot_RxContextTypeDef *context,uint8_t byt
             total_len > BOOT_FRAME_MAX_SIZE))
         {
             Boot_RxInit(context);
-             return BOOT_RX_FRAME_ERROR;
+            return BOOT_RX_FRAME_ERROR;
         }
         
         context->expected_len = total_len;

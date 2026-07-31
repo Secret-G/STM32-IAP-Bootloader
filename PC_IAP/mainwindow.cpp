@@ -9,57 +9,34 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , serialPort(new QSerialPort(this))
+    , ackTimer(new QTimer(this))
 {
     ui->setupUi(this);
 
-    connect(ui->pushButtonRefreshPort,
-            &QPushButton::clicked,
-            this,
-            &MainWindow::refreshSerialPorts);
+    connect(ui->pushButtonRefreshPort, &QPushButton::clicked, this, &MainWindow::refreshSerialPorts);
 
-    /*
-     * 打开/关闭串口按钮。
-     */
-    connect(ui->pushButtonOpenSerial,
-            &QPushButton::clicked,
-            this,
-            &MainWindow::toggleSerialPort);
+    /*打开/关闭串口按钮。*/
+    connect(ui->pushButtonOpenSerial, &QPushButton::clicked, this, &MainWindow::toggleSerialPort);
 
-    /*
-     * 选择BIN文件按钮。
-     */
-    connect(ui->pushButtonBrowseBin,
-            &QPushButton::clicked,
-            this,
-            &MainWindow::selectBinFile);
-    /*
-     * 清空日志按钮。
-     */
-    connect(ui->pushButtonClearLog,
-            &QPushButton::clicked,
-            ui->plainTextEditLog,
-            &QPlainTextEdit::clear);
+    /*选择BIN文件按钮。*/
+    connect(ui->pushButtonBrowseBin, &QPushButton::clicked, this, &MainWindow::selectBinFile);
 
-    /*
-     * 点击“开始升级”后发送START。
-     */
-    connect(ui->pushButtonStartUpgrade,
-            &QPushButton::clicked,
-            this,
-            &MainWindow::startUpgrade);
+    /*清空日志按钮。*/
+    connect(ui->pushButtonClearLog, &QPushButton::clicked, ui->plainTextEditLog, &QPlainTextEdit::clear);
 
-    /*
-     * USART1收到数据时读取ACK/NACK。
-     */
-    connect(serialPort,
-            &QSerialPort::readyRead,
-            this,
-            &MainWindow::onSerialReadyRead);
+    /*点击“开始升级”后发送START。*/
+    connect(ui->pushButtonStartUpgrade, &QPushButton::clicked, this, &MainWindow::startUpgrade);
 
-    /*
-     * 软件启动时立即扫描一次串口
-     */
+    /*USART1收到数据时读取ACK/NACK。*/
+    connect(serialPort, &QSerialPort::readyRead, this, &MainWindow::onSerialReadyRead);
 
+    /*ACK定时器采用单次触发模式。*/
+    ackTimer->setSingleShot(true);
+
+    /*定时器超时时调用onAckTimeout()。*/
+    connect(ackTimer, &QTimer::timeout, this, &MainWindow::onAckTimeout);
+
+    /*软件启动时立即扫描一次串口*/
     refreshSerialPorts();
 }
 
@@ -237,9 +214,7 @@ void MainWindow::selectBinFile()
                                          QString(),
                                         "BIN固件 (*.bin);;所有文件 (*.*)");
 
-    /*
-     * 用户点击取消时，路径为空。
-     */
+    /*用户点击取消时，路径为空。*/
     if (filePath.isEmpty())
     {
         return;
@@ -247,18 +222,14 @@ void MainWindow::selectBinFile()
 
     QFile file(filePath);
 
-    /*
-     * 使用只读方式打开BIN文件。
-     */
+    /*使用只读方式打开BIN文件。*/
     if (!file.open(QIODevice::ReadOnly))
     {
         ui->plainTextEditLog->appendPlainText(QString("[固件] 文件打开失败：%1").arg(file.errorString()));
         return;
     }
 
-    /*
-     * 一次性读取整个BIN文件。
-     */
+    /*一次性读取整个BIN文件。*/
     const QByteArray data = file.readAll();
 
     file.close();
@@ -269,25 +240,17 @@ void MainWindow::selectBinFile()
         return;
     }
 
-    /*
-     * 文件读取成功后再替换原来的固件数据。
-     */
+    /*文件读取成功后再替换原来的固件数据。*/
     firmwareData = data;
 
-    /*
-     * 计算整个BIN文件的CRC16。
-     */
+    /*计算整个BIN文件的CRC16。*/
     const quint16 imageCrc = BootProtocol::crc16Modbus(firmwareData);
 
-    /*
-     * 更新界面。
-     */
+    /*更新界面。*/
     ui->lineEditBinPath->setText(filePath);
     ui->labelFileSizeValue->setText( QString("%1 字节").arg(firmwareData.size()));
 
-    /*
-     * 把CRC显示成4位大写十六进制。
-     */
+    /*把CRC显示成4位大写十六进制。*/
     const QString crcText = QString::number(imageCrc, 16).rightJustified(4, '0').toUpper();
 
     ui->labelFileCrcValue->setText( "0x" + crcText);
@@ -304,19 +267,14 @@ void MainWindow::selectBinFile()
 
 void MainWindow::startUpgrade()
 {
-    /*
-     * 必须先打开协议串口。
-     */
+    /*必须先打开协议串口。*/
     if (!serialPort->isOpen())
     {
         ui->plainTextEditLog->appendPlainText("[升级] 协议串口尚未打开");
-
         return;
     }
 
-    /*
-     * 必须先选择有效BIN文件。
-     */
+    /*必须先选择有效BIN文件。*/
     if (firmwareData.isEmpty())
     {
         ui->plainTextEditLog->appendPlainText("[升级] 尚未加载BIN文件");
@@ -338,14 +296,10 @@ void MainWindow::startUpgrade()
     const quint32 imageSize = static_cast<quint32>(firmwareData.size());
     const quint16 imageCrc = BootProtocol::crc16Modbus(firmwareData);
 
-    /*
-     * 每张DATA帧最多携带256字节BIN数据。
-     */
+    /*每张DATA帧最多携带256字节BIN数据。*/
     constexpr quint32 packetDataSize = 256U;
 
-    /*
-     * 一次新的升级从第0包开始。
-     */
+    /*一次新的升级从第0包开始。*/
     currentPacketSequence = 0U;
 
     /*
@@ -354,22 +308,14 @@ void MainWindow::startUpgrade()
      */
     totalPacketCount = (imageSize + packetDataSize - 1U) / packetDataSize;
 
-    /*
- * 一次新升级开始时，初始化DATA进度显示。
- */
+    /*一次新升级开始时，初始化DATA进度显示。*/
     ui->labelPacketProgressValue->setText(QString("0 / %1").arg(totalPacketCount));
-
     ui->progressBarUpgrade->setRange(0, 100);
     ui->progressBarUpgrade->setValue(0);
     ui->progressBarUpgrade->setFormat("%p% · 正在升级");
+    ui->plainTextEditLog->appendPlainText(QString("[升级] BIN大小=%1字节，DATA总包数=%2").arg(imageSize).arg(totalPacketCount));
 
-    ui->plainTextEditLog->appendPlainText(
-        QString("[升级] BIN大小=%1字节，DATA总包数=%2").arg(imageSize).arg(totalPacketCount));
-
-    /*
-     * 根据目标、整个BIN大小和整个BIN CRC
-     * 构造完整START协议帧。
-     */
+    /*根据目标、整个BIN大小和整个BIN CRC,构造完整START协议帧。*/
     const QByteArray startFrame = BootProtocol::buildStartFrame(target,imageSize,imageCrc);
 
     if (startFrame.isEmpty())
@@ -378,9 +324,7 @@ void MainWindow::startUpgrade()
         return;
     }
 
-    /*
-     * 开始一次新的请求前清空旧应答数据。
-     */
+    /*开始一次新的请求前清空旧应答数据。*/
     responseBuffer.clear();
 
     /*
@@ -403,9 +347,7 @@ void MainWindow::startUpgrade()
         return;
     }
 
-    /*
-     * 立即启动底层串口发送。
-     */
+    /*立即启动底层串口发送。*/
     if (!serialPort->flush())
     {
         ui->plainTextEditLog->appendPlainText(QString("[升级] START刷新发送缓存失败：%1")
@@ -413,9 +355,7 @@ void MainWindow::startUpgrade()
         return;
     }
 
-    /*
-     * 等待电脑真正向串口驱动写出数据。
-     */
+    /*等待电脑真正向串口驱动写出数据。*/
     if (!serialPort->waitForBytesWritten(1000))
     {
         ui->plainTextEditLog->appendPlainText(
@@ -423,8 +363,25 @@ void MainWindow::startUpgrade()
         return;
     }
 
-    ui->plainTextEditLog->appendPlainText(
-        QString("[发送确认] START共%1字节，已交给串口驱动").arg(written));
+    /*
+     * 这是一次新的START请求，
+     * 重发次数从0开始。
+     */
+    retryCount = 0;
+
+    /*保存当前正在等待应答的完整START帧*/
+    pendingFrame = startFrame;
+
+    /*
+     * 记录当前等待的是START应答，
+     * 用于识别ACK/NACK以及显示日志。
+     */
+    pendingCommand = static_cast<quint16>(BootProtocol::CmdStartUpdate);
+
+    /*开始等待STM32的START应答。*/
+    ackTimer->start(AckTimeoutMs);
+
+    ui->plainTextEditLog->appendPlainText(QString("[发送确认] START共%1字节，已交给串口驱动").arg(written));
 
     /*
      * 等待START应答期间锁定固件和目标，
@@ -436,9 +393,7 @@ void MainWindow::startUpgrade()
     ui->radioButtonTargetB->setEnabled(false);
 
     ui->labelUpgradeStatusValue->setText("等待START应答");
-
     ui->labelLastResponseValue->setText("--");
-
     ui->plainTextEditLog->appendPlainText(
                 QString("[发送] START，目标=%1，大小=%2，CRC=0x%3")
                 .arg(target).arg(imageSize)
@@ -509,6 +464,14 @@ void MainWindow::onSerialReadyRead()
             if ((response.requestCommand == BootProtocol::CmdStartUpdate) &&
                 (response.result == BootProtocol::ResultOk))
             {
+                /*
+                 * START ACK已经到达，
+                 * 停止START应答定时器。
+                 */
+                ackTimer->stop();
+                pendingFrame.clear();
+                retryCount = 0;
+
                 ui->plainTextEditLog->appendPlainText("[升级] STM32已接受START命令");
                 /*
                  * START成功后，
@@ -526,6 +489,8 @@ void MainWindow::onSerialReadyRead()
             else if ((response.requestCommand == BootProtocol::CmdDataPacket) &&
                      (response.result == BootProtocol::ResultOk))
             {
+
+
                 if(response.value != currentPacketSequence)
                 {
                     ui->labelUpgradeStatusValue->setText("DATA应答序号错误");
@@ -539,6 +504,11 @@ void MainWindow::onSerialReadyRead()
 
                     return;
                 }
+
+                ackTimer->stop();
+                pendingFrame.clear();
+                pendingCommand = 0U;
+                retryCount = 0;
 
                 const quint32 completedPackets = currentPacketSequence + 1U;
 
@@ -585,7 +555,6 @@ void MainWindow::onSerialReadyRead()
                 }
                 else
                 {
-
                     ui->progressBarUpgrade->setValue(100);
                     ui->progressBarUpgrade->setFormat("%p% · DATA发送完成");
 
@@ -607,9 +576,7 @@ void MainWindow::onSerialReadyRead()
                 }
             }
 
-            /*
-             * 处理STM32返回的END成功应答。
-             */
+            /*处理STM32返回的END成功应答。*/
             else if ((response.requestCommand == BootProtocol::CmdEndUpdate) &&
                      (response.result == BootProtocol::ResultOk))
             {
@@ -631,6 +598,12 @@ void MainWindow::onSerialReadyRead()
 
                     return;
                 }
+
+                ackTimer->stop();
+                pendingFrame.clear();
+                pendingCommand = 0U;
+                retryCount = 0;
+
                 /*
                  * 此时STM32已经完成：
                  *
@@ -685,6 +658,18 @@ void MainWindow::onSerialReadyRead()
         }
         else
         {
+            /*
+             * 只有当NACK对应当前正在等待的命令时，
+             * 才结束当前ACK等待。
+             */
+
+            if (response.requestCommand == pendingCommand)
+            {
+                ackTimer->stop();
+                pendingFrame.clear();
+                pendingCommand = 0;
+                retryCount = 0;
+            }
             ui->labelLastResponseValue->setText("NACK");
             ui->labelUpgradeStatusValue->setText("START失败");
             ui->plainTextEditLog->appendPlainText(
@@ -710,9 +695,7 @@ void MainWindow::onSerialReadyRead()
 
 bool MainWindow::sendCurrentDataPacket()
 {
-    /*
-     * 必须已经打开协议串口。
-     */
+    /*必须已经打开协议串口。*/
     if (!serialPort->isOpen())
     {
         ui->plainTextEditLog->appendPlainText("[升级] DATA发送失败：串口未打开");
@@ -746,7 +729,7 @@ bool MainWindow::sendCurrentDataPacket()
      * 第1包：1 × 256 = 256
      * 第2包：2 × 256 = 512
      */
-    const qsizetype offset = static_cast<qsizetype>(currentPacketSequence) *packetDataSize;
+    const qsizetype offset = static_cast<qsizetype>(currentPacketSequence) * packetDataSize;
 
     /*
      * 从完整BIN中截取当前包的数据。
@@ -776,8 +759,7 @@ bool MainWindow::sendCurrentDataPacket()
 
     if (dataFrame.isEmpty())
     {
-        ui->plainTextEditLog->appendPlainText(
-            QString("[升级] DATA包%1组帧失败").arg(currentPacketSequence));
+        ui->plainTextEditLog->appendPlainText(QString("[升级] DATA包%1组帧失败").arg(currentPacketSequence));
         return false;
     }
 
@@ -799,9 +781,7 @@ bool MainWindow::sendCurrentDataPacket()
         return false;
     }
 
-    /*
-     * 立即尝试把Qt内部缓存交给串口驱动。
-     */
+    /*立即尝试把Qt内部缓存交给串口驱动。*/
     if (!serialPort->flush())
     {
         ui->plainTextEditLog->appendPlainText(
@@ -812,9 +792,7 @@ bool MainWindow::sendCurrentDataPacket()
         return false;
     }
 
-    /*
-     * 等待Qt内部待发送数据全部交给串口驱动。
-     */
+    /*等待Qt内部待发送数据全部交给串口驱动。*/
     while (serialPort->bytesToWrite() > 0)
     {
         if (!serialPort->waitForBytesWritten(1000))
@@ -828,10 +806,30 @@ bool MainWindow::sendCurrentDataPacket()
         }
     }
 
-    ui->labelUpgradeStatusValue->setText(
-        QString("DATA包%1已发送，等待ACK")
-            .arg(currentPacketSequence));
+    /*
+     * 当前DATA帧已经成功交给串口驱动。
+     *
+     * 这是一个新的DATA请求，
+     * 重发次数从0开始。
+     */
+    retryCount = 0;
 
+    /*
+     * 保存当前完整DATA帧。
+     *
+     * 如果本包ACK丢失，
+     * 超时函数将重新发送完全相同的DATA帧，
+     * 包括相同的数据、序号和CRC。
+     */
+    pendingFrame = dataFrame;
+
+    /* 当前等待的是DATA命令的应答。*/
+    pendingCommand = static_cast<quint16>(BootProtocol::CmdDataPacket);
+
+    /* 开始等待本包DATA的ACK。*/
+    ackTimer->start(AckTimeoutMs);
+
+    ui->labelUpgradeStatusValue->setText(QString("DATA包%1已发送，等待ACK").arg(currentPacketSequence));
     ui->plainTextEditLog->appendPlainText(
         QString(
             "[发送] DATA包%1，"
@@ -846,18 +844,14 @@ bool MainWindow::sendCurrentDataPacket()
 
 bool MainWindow::sendEndFrame()
 {
-    /*
-     * 发送前检查串口。
-     */
+    /*发送前检查串口。*/
     if (!serialPort->isOpen())
     {
         ui->plainTextEditLog->appendPlainText("[升级] END发送失败：串口未打开");
         return false;
     }
 
-    /*
-     * 如果总包数为0，说明升级参数不正常。
-     */
+    /*如果总包数为0，说明升级参数不正常。*/
     if (totalPacketCount == 0U)
     {
         ui->plainTextEditLog->appendPlainText("[升级] END发送失败：DATA总包数为0");
@@ -919,6 +913,28 @@ bool MainWindow::sendEndFrame()
         }
     }
 
+    /*
+     * END已经成功交给串口驱动。
+     *
+     * 这是一个新的END请求，
+     * 重发次数从0开始。
+     */
+    retryCount = 0;
+
+    /*
+     * 保存完整END帧。
+     *
+     * 如果END ACK丢失，
+     * 超时函数会重新发送完全相同的END帧。
+     */
+    pendingFrame = endFrame;
+
+    /*记录当前等待的是END应答。*/
+    pendingCommand = static_cast<quint16>(BootProtocol::CmdEndUpdate);
+
+    /*启动END ACK等待。*/
+    ackTimer->start(AckTimeoutMs);
+
     ui->labelUpgradeStatusValue->setText("END已发送，等待ACK");
 
     ui->plainTextEditLog->appendPlainText(
@@ -935,4 +951,130 @@ bool MainWindow::sendEndFrame()
     return true;
 
 
+}
+
+void MainWindow::onAckTimeout()
+{
+    /*
+     * 如果没有保存待应答帧，
+     * 说明当前超时状态不正常。
+     */
+    if (pendingFrame.isEmpty())
+    {
+        ui->plainTextEditLog->appendPlainText("[超时] 没有找到待重发协议帧");
+        return;
+    }
+
+    /*串口已经关闭，无法继续重发。*/
+    if (!serialPort->isOpen())
+    {
+        ui->labelUpgradeStatusValue->setText("应答超时，串口已关闭");
+        ui->plainTextEditLog->appendPlainText("[超时] 串口已经关闭，升级终止");
+        pendingFrame.clear();
+        retryCount = 0;
+        return;
+    }
+
+    /*
+     * 最多允许重发3次。
+     */
+    if (retryCount >= MaxRetryCount)
+    {
+        ui->labelUpgradeStatusValue->setText("START应答超时，升级终止");
+        ui->plainTextEditLog->appendPlainText("[升级失败] START连续3次重发后仍未收到应答");
+
+        /*当前请求结束，清除待重发帧和重发次数。*/
+        pendingFrame.clear();
+        retryCount = 0;
+
+        /*恢复界面，允许用户重新尝试。*/
+        ui->pushButtonBrowseBin->setEnabled(true);
+        ui->radioButtonTargetA->setEnabled(true);
+        ui->radioButtonTargetB->setEnabled(true);
+        ui->pushButtonStartUpgrade->setEnabled(serialPort->isOpen() && !firmwareData.isEmpty());
+        return;
+    }
+
+    /* 准备执行一次重发。*/
+    retryCount++;
+
+    /*重新发送之前保存的完整START帧。*/
+    const qint64 written = serialPort->write(pendingFrame);
+
+    if (written != pendingFrame.size())
+    {
+        ui->labelUpgradeStatusValue->setText("START重发失败");
+
+        ui->plainTextEditLog->appendPlainText(
+            QString(
+                "[重发失败] 需要发送%1字节，"
+                "实际写入%2字节，错误：%3")
+                .arg(pendingFrame.size())
+                .arg(written)
+                .arg(serialPort->errorString()));
+
+        return;
+    }
+
+    /*
+     * 尽快把Qt发送缓存交给串口驱动。
+     */
+    if (!serialPort->flush())
+    {
+        ui->labelUpgradeStatusValue->setText("START重发失败");
+        ui->plainTextEditLog->appendPlainText(
+            QString("[重发失败] 刷新发送缓存失败：%1")
+                .arg(serialPort->errorString()));
+
+        return;
+    }
+
+    /*等待Qt中的数据全部交给串口驱动。*/
+    while (serialPort->bytesToWrite() > 0)
+    {
+        if (!serialPort->waitForBytesWritten(1000))
+        {
+            ui->labelUpgradeStatusValue->setText("START重发超时");
+            ui->plainTextEditLog->appendPlainText(QString("[重发失败] 串口发送超时：%1").arg(serialPort->errorString()));
+            return;
+        }
+    }
+
+
+
+    /* 根据pendingCommand判断当前重发的是哪种帧。*/
+    QString commandName;
+
+    switch (pendingCommand)
+    {
+        case BootProtocol::CmdStartUpdate:
+            commandName = "START";
+            break;
+
+        case BootProtocol::CmdDataPacket:
+            commandName = "DATA";
+            break;
+
+        case BootProtocol::CmdEndUpdate:
+            commandName = "END";
+            break;
+
+        default:
+            commandName = QString("未知命令0x%1").arg(QString::number(pendingCommand,16) .rightJustified(4, '0').toUpper());
+            break;
+    }
+
+    ui->labelUpgradeStatusValue->setText(QString("%1第%2次重发，等待ACK").arg(commandName).arg(retryCount));
+
+    ui->plainTextEditLog->appendPlainText(
+        QString(
+            "[重发] %1第%2/%3次，"
+            "完整帧=%4字节")
+            .arg(commandName)
+            .arg(retryCount)
+            .arg(MaxRetryCount)
+            .arg(pendingFrame.size()));
+
+    /*本次重发已经完成，重新等待3秒。*/
+    ackTimer->start(AckTimeoutMs);
 }

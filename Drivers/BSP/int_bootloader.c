@@ -83,7 +83,7 @@ void bootloader_init(void)
     HAL_UARTEx_ReceiveToIdle_IT(&huart1,
                                uart_rec_buff,
                                BOOT_FRAME_MAX_SIZE);
-    
+
     printf("WAIT_COMMAND\r\n");
 }
 
@@ -351,8 +351,6 @@ static void Boot_ProtocolReceiveRestart(void)
     HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff, BOOT_FRAME_MAX_SIZE);
 }
 
-
-
 /**
  * @brief 构造并发送一张ACK/NACK应答帧。
  *
@@ -404,14 +402,11 @@ static HAL_StatusTypeDef Boot_SendResponse(
 
 /**
  * @brief 处理一张START升级帧。
- * @param frame     完整协议帧地址。
- * @param frame_len 完整协议帧长度。
  */
 static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 {
     Boot_StartInfoTypeDef start_info;
     HAL_StatusTypeDef status;
-
     uint32_t target_region_size;
     uint32_t run_region_size;
 
@@ -439,10 +434,48 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
     /*
      * 当前已经处于升级接收状态，
-     * 不允许再次执行START擦除。
+     * 说明之前已经成功执行过一张START帧。
      */
     if (protocol_update_state == BOOT_RECEIVE)
     {
+
+    /*
+     * 判断当前START是否是上一张START的重复发送。
+     *
+     * 必须同时满足：
+     *
+     * 1. 还没有接收任何BIN数据；
+     * 2. 还在等待第0包；
+     * 3. 升级目标相同；
+     * 4. 固件大小相同；
+     * 5. 固件CRC相同。
+     *
+     * 满足这些条件，说明很可能是START ACK丢失，
+     * Qt重新发送了完全相同的START帧。
+     */
+    if ((protocol_received_size == 0U) &&
+        (protocol_expected_sequence == 0U) &&
+        (start_info.target == protocol_update_info.target) &&
+        (start_info.image_size == protocol_update_info.image_size) &&
+        (start_info.image_crc == protocol_update_info.image_crc))
+    {
+        printf("START_DUPLICATE\r\n");
+
+        /*
+         * 目标区已经擦除完成，
+         * 不能再次调用Boot_StartUpdate()。
+         *
+         * 这里只重新发送上一张START的ACK。
+         */
+        (void)Boot_SendResponse(
+            CMD_ACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_OK,
+            (uint32_t)protocol_update_info.target);
+
+        return;
+    }
+
         printf("UPDATE_BUSY\r\n");
     /*
      * 当前状态不允许再次执行START。
@@ -554,6 +587,9 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
     printf("START_UPDATE_OK\r\n");
     printf("READY_SIZE:%lu\r\n", (unsigned long)protocol_update_info.image_size);
+
+
+
     /*
     * START处理成功。
     *
@@ -569,8 +605,6 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
 /**
  * @brief 处理一张DATA固件数据帧。
- * @param frame     完整协议帧地址。
- * @param frame_len 完整协议帧长度。
  */
 static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
 {
@@ -591,7 +625,7 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
         return;
     }
 
-        /*
+    /*
      * 检查DATA帧的长度、CMD和帧CRC，
      * 并解析数据地址、数据长度和包序号。
      */
@@ -612,19 +646,38 @@ static void Boot_HandleDataFrame(uint8_t *frame,uint16_t frame_len)
      */
     if (data_info.sequence != protocol_expected_sequence)
     {
-        printf("SEQUENCE_ERROR\r\n");
-        printf("EXPECTED:%lu\r\n",(unsigned long)protocol_expected_sequence);
-        printf("RECEIVED:%lu\r\n",(unsigned long)data_info.sequence);
+        if ((protocol_expected_sequence > 0U) &&
+            (data_info.sequence == (protocol_expected_sequence - 1U)))
+        {
+            printf("DATA_DUPLICATE\r\n");
+            printf("SEQ:%lu\r\n",(unsigned long)data_info.sequence);
 
-       /*
-        * value返回Bootloader当前期望的包序号。
-        * 上位机可以据此重发正确的数据包。
+            (void)Boot_SendResponse(
+                CMD_ACK,
+                CMD_DATA_PACKET,
+                BOOT_RESULT_OK,
+                data_info.sequence);
+
+            return;
+        }
+
+        /*
+        * 既不是当前需要的包，
+        * 也不是刚刚成功写入的上一包，
+        * 说明序号确实发生错误。
         */
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_DATA_PACKET,
-            BOOT_RESULT_SEQUENCE_ERROR,
-            protocol_expected_sequence);
+        printf("SEQUENCE_ERROR\r\n");
+        printf("EXPECTED:%lu\r\n", (unsigned long)protocol_expected_sequence);
+        printf("RECEIVED:%lu\r\n", (unsigned long)data_info.sequence);
+
+        /*
+        * value返回STM32当前期望的包序号。
+        */
+    (void)Boot_SendResponse(
+        CMD_NACK,
+        CMD_DATA_PACKET,
+        BOOT_RESULT_SEQUENCE_ERROR,
+        protocol_expected_sequence);
         return;
     }
 
@@ -721,9 +774,86 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     uint16_t calculated_image_crc;
 
     /*
-     * 必须先成功处理START，
-     * 并处于DATA接收状态，才允许处理END。
-     */
+    * 先检查END帧本身是否正确，
+    * 并从RESERVE字段解析Qt声明的DATA总包数。
+    *
+    * 这里必须先解析，再判断升级状态，
+    * 因为识别重复END需要使用packet_count。
+    */
+    if (Boot_ParseEndFrame(frame, frame_len, &packet_count) == 0U)
+    {
+        printf("END_FRAME_ERROR\r\n");
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_FRAME_ERROR,
+            0U);
+
+        return;
+    }
+
+    printf("END_FRAME_OK\r\n");
+    printf("PACKET_COUNT:%lu\r\n",(unsigned long)packet_count);
+
+    /*
+    * 如果当前已经是BOOT_READY，
+    * 说明之前的一张END已经完成了：
+    *
+    * 1. DATA总包数检查；
+    * 2. 固件总大小检查；
+    * 3. Flash缓存刷新；
+    * 4. 整个固件CRC检查。
+    *
+    * 此时再次收到相同END，
+    * 很可能是上一张END ACK丢失。
+    */
+    if (protocol_update_state == BOOT_READY)
+    {
+        /*
+        * 判断这是不是上一张成功END的重复发送。
+        *
+        * packet_count必须等于STM32实际接收的包数，
+        * received_size也必须等于START声明的固件大小。
+        */
+        if ((packet_count == protocol_expected_sequence) &&
+            (protocol_received_size == protocol_update_info.image_size))
+        {
+            printf("END_DUPLICATE\r\n");
+
+            /*
+            * 固件已经校验成功，
+            * 不需要再次刷新缓存或重新计算CRC。
+            *
+            * 只重新发送上一张END的ACK。
+            */
+            (void)Boot_SendResponse(
+                CMD_ACK,
+                CMD_END_UPDATE,
+                BOOT_RESULT_OK,
+                protocol_expected_sequence);
+
+            return;
+        }
+
+        /*
+        * 当前虽然处于BOOT_READY，
+        * 但收到的END包数与上次升级结果不一致。
+        */
+        printf("END_DUPLICATE_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_PACKET_COUNT_ERROR,
+            protocol_expected_sequence);
+
+        return;
+    }
+
+    /*
+    * 如果不是重复END，
+    * 那么普通END只能在BOOT_RECEIVE状态下处理。
+    */
     if (protocol_update_state != BOOT_RECEIVE)
     {
         printf("END_WITHOUT_START\r\n");
@@ -736,27 +866,6 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
 
         return;
     }
-
-    /*
-     * 检查END帧的CMD、长度和帧CRC，
-     * 并从RESERVE字段解析总包数。
-     */
-    if (Boot_ParseEndFrame(frame, frame_len, &packet_count) == 0U)
-    {
-        printf("END_FRAME_ERROR\r\n");
-
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_END_UPDATE,
-            BOOT_RESULT_FRAME_ERROR,
-            0U);
-        return;
-    }
-
-    printf("END_FRAME_OK\r\n");
-
-    printf("PACKET_COUNT:%lu\r\n",(unsigned long)packet_count);
-
     /*
      * protocol_expected_sequence从0开始，
      * 每成功接收一包就加1。

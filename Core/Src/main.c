@@ -34,9 +34,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
-#define APP_A_TEST_SIZE  5528U
-#define APP_B_TEST_SIZE  5528U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -68,7 +65,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  KeyValue_t key_value;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -102,80 +98,10 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
     led_on();
-    
     Bootloader_Process();
 
-    key_value = Key_Scan();
 
-    if (key_value == KEY0_PRESSED)
-    {
-        printf("COPY_A_START\r\n");
-
-        if (Boot_CopyToRun(APP_A_ADDR,APP_A_TEST_SIZE) == HAL_OK)
-        {
-            printf("COPY_A_OK:%lu\r\n",(uint32_t)APP_A_TEST_SIZE);
-
-            HAL_Delay(100U);
-
-            Boot_JumpToApp();
-
-            printf("JUMP_A_FAILED\r\n");
-        }
-        else
-        {
-            printf("COPY_A_FAILED\r\n");
-        }
-    }
-    else if (key_value == KEY1_PRESSED)
-    {
-        printf("COPY_B_START\r\n");
-
-        if (Boot_CopyToRun(APP_B_ADDR,
-                          APP_B_TEST_SIZE) == HAL_OK)
-        {
-            printf("COPY_B_OK:%lu\r\n",
-                  (uint32_t)APP_B_TEST_SIZE);
-
-            HAL_Delay(100U);
-
-            Boot_JumpToApp();
-
-            printf("JUMP_B_FAILED\r\n");
-        }
-        else
-        {
-            printf("COPY_B_FAILED\r\n");
-        }
-    }
-
-    else if (key_value == KEY2_PRESSED)
-    { 
-      printf("PENDING_INSTALL_START\r\n");
-
-      /*
-      * 根据Flag中的pending_slot，
-      * 自动选择A区或者B区并搬运到运行区。
-      */
-      if (Boot_InstallPendingImage() == HAL_OK)
-      {
-        printf("PENDING_INSTALL_OK\r\n");
-
-        HAL_Delay(100U);
-
-        Boot_JumpToApp();
-
-        /*
-        * 正常情况下不会返回。
-        */
-        printf("JUMP_APP_FAILED\r\n");
-      }
-      else
-      {
-          printf("PENDING_INSTALL_FAILED\r\n");
-      }
-    }
   }
   /* USER CODE END 3 */
 }

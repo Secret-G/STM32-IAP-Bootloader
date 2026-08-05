@@ -93,7 +93,7 @@ HAL_StatusTypeDef Flash_Write(uint32_t addr,uint8_t *data,uint32_t len)
     }
 
 
-    if((addr < APP_RUN_ADDR) ||
+    if((addr < FLAG_START_ADDR) ||
        (addr > FLASH_END_ADDR) ||
        (len > (FLASH_END_ADDR - addr + 1U)))
     {

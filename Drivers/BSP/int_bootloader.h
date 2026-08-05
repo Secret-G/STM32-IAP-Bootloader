@@ -14,4 +14,12 @@ void Bootloader_Process(void);
 void Boot_JumpToApp(void);
 HAL_StatusTypeDef Boot_CopyToRun(uint32_t source_addr, uint32_t image_size);
 
+/*
+ * 将Flag中记录的pending固件
+ * 搬运到运行区并完成CRC校验。
+ */
+HAL_StatusTypeDef Boot_InstallPendingImage(void);
+
+HAL_StatusTypeDef Boot_CopyToRun(uint32_t source_addr,uint32_t image_size);
+
 #endif

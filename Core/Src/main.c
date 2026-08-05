@@ -149,6 +149,33 @@ int main(void)
             printf("COPY_B_FAILED\r\n");
         }
     }
+
+    else if (key_value == KEY2_PRESSED)
+    { 
+      printf("PENDING_INSTALL_START\r\n");
+
+      /*
+      * 根据Flag中的pending_slot，
+      * 自动选择A区或者B区并搬运到运行区。
+      */
+      if (Boot_InstallPendingImage() == HAL_OK)
+      {
+        printf("PENDING_INSTALL_OK\r\n");
+
+        HAL_Delay(100U);
+
+        Boot_JumpToApp();
+
+        /*
+        * 正常情况下不会返回。
+        */
+        printf("JUMP_APP_FAILED\r\n");
+      }
+      else
+      {
+          printf("PENDING_INSTALL_FAILED\r\n");
+      }
+    }
   }
   /* USER CODE END 3 */
 }

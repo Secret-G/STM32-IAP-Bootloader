@@ -2,6 +2,7 @@
 #include "boot_protocol.h"
 #include "boot_crc.h"
 #include <string.h>
+#include "boot_flag.h"
 
 #define BOOT_COPY_BUFFER_SIZE  256U /*复制缓冲区大小*/
 
@@ -29,12 +30,7 @@ static Boot_StateTypeDef protocol_update_state = BOOT_IDLE;
 /*
  * 保存当前START帧提供的升级信息。
  */
-static Boot_StartInfoTypeDef protocol_update_info =
-{
-    UPDATE_NONE,
-    0U,
-    0U
-};
+static Boot_StartInfoTypeDef protocol_update_info ={ UPDATE_NONE,0U, 0U};
 
 /*
  * 当前已经成功写入目标区的BIN字节数。
@@ -80,11 +76,16 @@ void bootloader_init(void)
     __HAL_UART_CLEAR_IDLEFLAG(&huart1);
     __HAL_UART_CLEAR_OREFLAG(&huart1);
 
-    HAL_UARTEx_ReceiveToIdle_IT(&huart1,
-                               uart_rec_buff,
-                               BOOT_FRAME_MAX_SIZE);
+    HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff,BOOT_FRAME_MAX_SIZE);
 
-    printf("WAIT_COMMAND\r\n");
+    if (Boot_FlagInit() == HAL_OK)
+    {
+        printf("BOOT_FLAG_INIT_OK\r\n");
+    }
+    else
+    {
+        printf("BOOT_FLAG_INIT_ERROR\r\n");
+    }
 }
 
 void Boot_JumpToApp(void)
@@ -239,16 +240,12 @@ HAL_StatusTypeDef Boot_CopyToRun(uint32_t source_addr, uint32_t image_size)
         /*
          * 最后一包不足4字节时使用0xFF填充。
          */
-        memset(boot_copy_buffer,
-               0xFF,
-               sizeof(boot_copy_buffer));
+        memset(boot_copy_buffer,0xFF,sizeof(boot_copy_buffer));
 
         /*
          * 先从A/B区复制到RAM。
          */
-        memcpy(boot_copy_buffer,
-               (const void *)(source_addr + copied_size),
-               data_size);
+        memcpy(boot_copy_buffer,(const void *)(source_addr + copied_size),data_size);
 
         /*
          * 再从RAM写入运行区。
@@ -358,8 +355,6 @@ static void Boot_ProtocolReceiveRestart(void)
  * @param request_cmd  本次应答对应的原始请求命令。
  * @param result       请求处理结果。
  * @param value        附加信息，例如包序号或期望包序号。
- *
- * @return HAL_OK表示发送成功，其余表示构造或发送失败。
  */
 static HAL_StatusTypeDef Boot_SendResponse(
     Boot_CmdTypeDef response_cmd,
@@ -409,6 +404,12 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     HAL_StatusTypeDef status;
     uint32_t target_region_size;
     uint32_t run_region_size;
+
+    /*
+     * START目标转换成Flag模块使用的槽位。
+     */
+
+    Boot_SlotTypeDef target_slot;
 
     /*
      * 检查START帧的长度、CRC和DATA内容。
@@ -496,16 +497,19 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     if (start_info.target == UPDATE_APP_A)
     {
         target_region_size = APP_A_END_ADDR - APP_A_ADDR + 1U;
+        target_slot = BOOT_SLOT_A;
     }
     else
     {
         target_region_size = APP_B_END_ADDR - APP_B_ADDR + 1U;
+        target_slot = BOOT_SLOT_B;
     }
 
     /*
      * 计算运行区容量。
      */
     run_region_size = APP_RUN_END_ADDR - APP_RUN_ADDR + 1U;
+    
 
     /*
      * BIN文件不能超过存储区和运行区。
@@ -539,8 +543,39 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     }
 
     /*
-     * 擦除目标区并初始化Flash写入缓存。
+     * 在真正擦除A/B区之前，
+     * 先把对应槽位标记为无效。
+     *
+     * 如果后续擦除、接收或写入过程中断电，
+     * 下次启动也不会使用这份残缺固件。
      */
+    status = Boot_FlagInvalidateImage(target_slot);
+
+    if (status != HAL_OK)
+    {
+        protocol_update_state = BOOT_ERROR;
+
+        printf("FLAG_INVALIDATE_ERROR\r\n");
+
+        /*
+        * Flag失效状态没有保存成功，
+        * 此时不能继续擦除目标固件区。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_FLASH_ERROR,
+            (uint32_t)status);
+
+        return;
+    }
+
+    printf("FLAG_INVALIDATE_OK\r\n");
+
+    /*
+    * Flag已经记录目标槽位无效，
+    * 现在才可以安全擦除目标区。
+    */
     status = Boot_StartUpdate(start_info.target);
 
     if (status != HAL_OK)
@@ -772,6 +807,10 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     uint32_t packet_count;
     uint32_t image_addr;
     uint16_t calculated_image_crc;
+    /*
+     * 保存经过转换后的Flag槽位。
+     */
+    Boot_SlotTypeDef ready_slot;
 
     /*
     * 先检查END帧本身是否正确，
@@ -788,7 +827,6 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
             CMD_END_UPDATE,
             BOOT_RESULT_FRAME_ERROR,
             0U);
-
         return;
     }
 
@@ -944,15 +982,18 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     if (protocol_update_info.target == UPDATE_APP_A)
     {
         image_addr = APP_A_ADDR;
+        ready_slot = BOOT_SLOT_A;
     }
     else if (protocol_update_info.target == UPDATE_APP_B)
     {
         image_addr = APP_B_ADDR;
+        ready_slot = BOOT_SLOT_B;
     }
     else
     {
         protocol_update_state = BOOT_ERROR;
         printf("UPDATE_TARGET_ERROR\r\n");
+        
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_END_UPDATE,
@@ -964,9 +1005,6 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     /*
      * 直接读取Flash中的真实BIN数据，
      * 重新计算整个文件的Modbus CRC16。
-     *
-     * 这里只计算真实image_size字节，
-     * 不计算最后补齐的0xFF。
      */
     calculated_image_crc =Boot_CRC16_Modbus((const uint8_t *)image_addr, protocol_update_info.image_size);
 
@@ -992,15 +1030,32 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 整个升级文件校验成功。
-     */
-    protocol_update_state = BOOT_READY;
     printf("IMAGE_CRC_OK\r\n");
+
+    /*将这份有效固件的信息保存到Flag区。*/
+    status = Boot_FlagSetPendingImage(
+        ready_slot,
+        protocol_update_info.image_size,
+        protocol_update_info.image_crc);
+
+    if (status != HAL_OK)
+    {
+        protocol_update_state = BOOT_ERROR;
+        printf("FLAG_UPDATE_ERROR\r\n");
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_END_UPDATE,
+            BOOT_RESULT_FLASH_ERROR,
+            (uint32_t)status);
+        return;
+    }
+    /*整个升级文件校验成功。*/
+    protocol_update_state = BOOT_READY;
+    printf("FLAG_UPDATE_OK\r\n");
     printf("UPDATE_READY\r\n");
 
     /*
-    * 固件大小、包数和整个BIN CRC全部正确。
+    * 固件大小、包数和整个BIN CRC和flag全部正确。
     * value返回成功接收的DATA总包数。
     */
     (void)Boot_SendResponse(
@@ -1104,7 +1159,7 @@ void Bootloader_Process(void)
 
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
-{{
+{
     Boot_RxResultTypeDef result;
     uint16_t i;
 
@@ -1153,4 +1208,157 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart,uint16_t Size)
 
         HAL_UARTEx_ReceiveToIdle_IT(&huart1,uart_rec_buff,PACKET_DATA_SIZE);
     }
-}}
+}
+
+
+HAL_StatusTypeDef Boot_InstallPendingImage(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    const Boot_ImageInfoTypeDef *image_info;
+
+    HAL_StatusTypeDef status;
+
+    uint32_t source_addr;
+    uint32_t image_size;
+
+    uint16_t expected_crc;
+    uint16_t calculated_crc;
+
+    /*
+     * 获取Boot_FlagInit()已经读取到RAM中的
+     * 当前Flag信息。
+     */
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+     /*
+     * 只有PENDING或者INSTALLING状态
+     * 才表示存在需要执行或重新执行的安装任务。
+     */
+    if ((flag_info->install_state != BOOT_INSTALL_PENDING) &&
+        (flag_info->install_state != BOOT_INSTALLING))
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 根据pending_slot选择源固件。
+     */
+    if (flag_info->pending_slot == BOOT_SLOT_A)
+    {
+        source_addr = APP_A_ADDR;
+        image_info = &flag_info->app_a;
+    }
+    else if (flag_info->pending_slot == BOOT_SLOT_B)
+    {
+        source_addr = APP_B_ADDR;
+        image_info = &flag_info->app_b;
+    }
+    else
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 待安装固件必须已经通过END校验。
+     */
+    if ((image_info->valid_mark != BOOT_IMAGE_VALID_MARK) ||
+        (image_info->image_size == 0U))
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 在修改Flag状态之前，
+     * 先保存本次安装需要使用的大小和CRC。
+     */
+    image_size = image_info->image_size;
+    expected_crc = image_info->image_crc;
+
+    printf("INSTALL_SOURCE:%lu\r\n",(unsigned long)flag_info->pending_slot);
+    printf("INSTALL_SIZE:%lu\r\n",(unsigned long)image_size);
+    printf("INSTALL_EXPECTED_CRC:0x%04X\r\n",(unsigned int)expected_crc);
+
+
+    /*
+     * 将Flag状态修改为INSTALLING。
+     *
+     * 如果当前本来就是INSTALLING，
+     * 说明上一次搬运可能被复位打断，
+     * 函数会允许重新搬运。
+     */
+    status = Boot_FlagBeginInstall();
+
+    if (status != HAL_OK)
+    {
+        printf("INSTALL_BEGIN_ERROR\r\n");
+        return status;
+    }
+
+    printf("INSTALL_BEGIN_OK\r\n");
+
+    /*
+     * 擦除运行区，
+     * 然后把A/B槽位中的固件复制到运行区。
+     */
+    status = Boot_CopyToRun(source_addr,image_size);
+
+    if (status != HAL_OK)
+    {
+        printf("INSTALL_COPY_ERROR\r\n");
+
+        /*
+         * 记录本次安装失败。
+         */
+        (void)Boot_FlagSetInstallError();
+
+        return status;
+    }
+
+    printf("INSTALL_COPY_OK\r\n");
+
+    /*
+     * 根据运行区中的真实数据，
+     * 重新计算整个APP的CRC16。
+     */
+    calculated_crc = Boot_CRC16_Modbus((const uint8_t *)APP_RUN_ADDR,image_size);
+
+    printf("INSTALL_RUN_CRC:0x%04X\r\n",(unsigned int)calculated_crc);
+
+     /*
+     * 运行区CRC必须与A/B备份固件CRC一致。
+     */
+    if (calculated_crc != expected_crc)
+    {
+        printf("INSTALL_CRC_ERROR\r\n");
+        (void)Boot_FlagSetInstallError();
+        return HAL_ERROR;
+    }
+    printf("INSTALL_CRC_OK\r\n");
+    /*
+     * 到这里说明：
+     *
+     * 1. A/B固件有效；
+     * 2. 搬运函数执行成功；
+     * 3. 运行区整个APP的CRC正确。
+     *
+     * 现在才允许更新active_slot，
+     * 并将安装状态改为IDLE。
+     */
+    status = Boot_FlagFinishInstall();
+
+    if (status != HAL_OK)
+    {
+        printf("INSTALL_FINISH_ERROR\r\n");
+        return status;
+    }
+
+    printf("INSTALL_FINISH_OK\r\n");
+
+    return HAL_OK;
+
+}

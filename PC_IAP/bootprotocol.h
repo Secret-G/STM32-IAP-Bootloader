@@ -29,8 +29,21 @@ public:
         CmdStartUpdate = 0x0002,
         CmdDataPacket  = 0x0003,
         CmdEndUpdate   = 0x0004,
+        CmdGetInfo   = 0x0007,
+
         CmdAck         = 0x8000,
         CmdNack        = 0x8001
+    };
+
+    /*
+     * STM32 Flag中使用的固件槽位。
+     * 数值必须与STM32端BOOT_SLOT定义一致。
+     */
+    enum Slot : quint32
+    {
+        SlotNone = 0U,
+        SlotA    = 1U,
+        SlotB    = 2U
     };
 
     /*
@@ -71,6 +84,9 @@ public:
     /* 构造一张通用请求帧：*/
     static QByteArray buildFrame( quint16 command,const QByteArray &data,quint32 reserveValue);
 
+    /*构造GET_INFO查询帧。该命令不携带DATA，用于查询STM32当前的active_slot。*/
+    static QByteArray buildGetInfoFrame();
+
     /* 构造START升级帧。*/
     static QByteArray buildStartFrame(quint8 target,quint32 imageSize,quint16 imageCrc);
 
@@ -91,10 +107,10 @@ private:
     /*按小端格式向数组末尾追加32位数据。*/
     static void appendUint32LE(QByteArray &buffer, quint32 value);
 
-    /* 从buffer指定位置读取一个小端16位数据。*/
+    /*从buffer指定位置读取一个小端16位数据*/
     static quint16 readUint16LE(const QByteArray &buffer,qsizetype offset);
 
-    /* 从buffer指定位置读取一个小端32位数据。*/
+    /*从buffer指定位置读取一个小端32位数据*/
     static quint32 readUint32LE(const QByteArray &buffer,qsizetype offset);
 };
 

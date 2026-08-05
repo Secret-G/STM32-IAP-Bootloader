@@ -26,20 +26,23 @@ private slots:
     void toggleSerialPort();
     void selectBinFile();
 
-    /*点击“开始升级”，发送START帧。*/
+    /*点击“开始升级”。*/
     void startUpgrade();
+
+    /*根据已经确定的A/B目标，构造并发送START升级帧。*/
+    void sendStartFrame();
 
     /* 协议串口收到数据时调用。*/
     void onSerialReadyRead();
 
-    /*
-     * 根据currentPacketSequence，
-     * 从firmwareData截取并发送当前DATA包。
-     */
+    /*根据currentPacketSequence，从firmwareData截取并发送当前DATA包。*/
     bool sendCurrentDataPacket();
 
     /*构造并发送END帧。*/
     bool sendEndFrame();
+
+    /*向STM32发送GET_INFO查询帧，查询当前运行固件对应的active_slot*/
+    bool sendGetInfoFrame();
 
     /*等待STM32应答超时时调用。*/
     void onAckTimeout();

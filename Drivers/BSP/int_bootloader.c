@@ -6,10 +6,7 @@
 
 #define BOOT_COPY_BUFFER_SIZE 256U /*复制缓冲区大小*/
 
-/*
- * Bootloader上电后等待升级命令的时间。
- * 3000ms等于3秒。
- */
+/*Bootloader上电后等待升级命令的时间,3000ms等于3秒。*/
 #define BOOT_WAIT_TIMEOUT_MS 3000U
 
 /*
@@ -27,42 +24,25 @@ static uint8_t boot_copy_buffer[BOOT_COPY_BUFFER_SIZE] = {0};
 
 static uint8_t uart_rec_buff[BOOT_FRAME_MAX_SIZE] = {0};
 
-/*
- * 协议帧接收器。
- * 用于跨多次UART回调拼接一张完整协议帧。
- */
+/*协议帧接收器,用于跨多次UART回调拼接一张完整协议帧。*/
 static Boot_RxContextTypeDef protocol_rx_context;
 
-/*
- * 完整协议帧等待主循环处理标志。
- * 在UART中断中置1，在主循环处理完成后清0。
- */
+/*完整协议帧等待主循环处理标志,在UART中断中置1，在主循环处理完成后清0。*/
 static volatile uint8_t protocol_frame_pending = 0U;
 
-/*
- * 当前协议升级状态。
- */
+/*当前协议升级状态。*/
 static Boot_StateTypeDef protocol_update_state = BOOT_IDLE;
 
-/*
- * 保存当前START帧提供的升级信息。
- */
+/*保存当前START帧提供的升级信息。*/
 static Boot_StartInfoTypeDef protocol_update_info = {UPDATE_NONE, 0U, 0U};
 
-/*
- * 当前已经成功写入目标区的BIN字节数。
- */
+/*当前已经成功写入目标区的BIN字节数。*/
 static uint32_t protocol_received_size = 0U;
 
-/*
- * 下一张DATA帧应该携带的包序号。
- * 第一包从0开始。
- */
+/*下一张DATA帧应该携带的包序号,第一包从0开始。*/
 static uint32_t protocol_expected_sequence = 0U;
 
-/*
- * 协议接收过程发生长度错误标志。
- */
+/*协议接收过程发生长度错误标志。*/
 static volatile uint8_t protocol_rx_error_pending = 0U;
 
 typedef void (*app_func_t)(void);
@@ -407,6 +387,109 @@ static HAL_StatusTypeDef Boot_SendResponse(
 }
 
 /**
+ * @brief 处理GET_INFO查询帧。
+ *
+ * GET_INFO没有DATA，完整帧长度固定为10字节。
+ * 查询成功后，通过ACK的value返回active_slot。
+ */
+static void Boot_HandleGetInfoFrame(uint8_t *frame,uint16_t frame_len)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    uint16_t cmd;
+    uint16_t total_len;
+    uint16_t received_crc;
+    uint16_t calculated_crc;
+
+    /*GET_INFO没有DATA，所以完整帧必须刚好等于最小帧长度10字节。*/
+    if ((frame == NULL) || (frame_len != BOOT_FRAME_MIN_SIZE))
+    {
+        printf("GET_INFO_LENGTH_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_GET_INFO,
+            BOOT_RESULT_FRAME_ERROR,
+            frame_len);
+
+        return;
+    }
+
+    /*解析CMD和帧内部声明的总长度。*/
+    cmd = Boot_ParseCmd(frame);
+
+    total_len =(uint16_t)frame[2] | ((uint16_t)frame[3] << 8U);
+
+    /*同时检查命令和帧内部长度*/
+    if ((cmd != (uint16_t)CMD_GET_INFO) || (total_len != frame_len))
+    {
+        printf("GET_INFO_FRAME_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_GET_INFO,
+            BOOT_RESULT_FRAME_ERROR,
+            total_len);
+        return;
+    }
+
+    /*取出帧尾保存的CRC。*/
+    received_crc = Boot_ParseCRC(frame, frame_len);
+
+    /*CRC只计算前8字节，不包含最后2字节CRC字段本身。*/
+    calculated_crc = Boot_CRC16_Modbus(frame,frame_len - BOOT_FRAME_CRC_SIZE);
+
+    if (received_crc != calculated_crc)
+    {
+        printf("GET_INFO_CRC_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_GET_INFO,
+            BOOT_RESULT_FRAME_ERROR,
+            received_crc);
+        return;
+    }
+
+    /*
+     * Boot_FlagInit()在初始化阶段已经把Flash标志
+     * 读取到了boot_flag_info中。
+     *
+     * 这里取得的是RAM中这份标志信息的地址，
+     * 不会再次擦写Flash。
+     */
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        printf("GET_INFO_FLAG_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_GET_INFO,
+            BOOT_RESULT_STATE_ERROR,
+            0U);
+
+        return;
+    }
+
+    printf("GET_INFO_OK\r\n");
+    printf("ACTIVE_SLOT:%lu\r\n",(unsigned long)flag_info->active_slot);
+
+    /*
+     * value返回活动槽位：
+     *
+     * 0：BOOT_SLOT_NONE
+     * 1：BOOT_SLOT_A
+     * 2：BOOT_SLOT_B
+     */
+    (void)Boot_SendResponse(
+        CMD_ACK,
+        CMD_GET_INFO,
+        BOOT_RESULT_OK,
+        (uint32_t)flag_info->active_slot);
+}
+
+/**
  * @brief 处理一张START升级帧。
  */
 static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
@@ -416,21 +499,18 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     uint32_t target_region_size;
     uint32_t run_region_size;
 
-    /*
-     * START目标转换成Flag模块使用的槽位。
-     */
-
+    /*START目标转换成Flag模块使用的槽位*/
     Boot_SlotTypeDef target_slot;
 
-    /*
-     * 检查START帧的长度、CRC和DATA内容。
-     */
+    /*指向当前RAM中的Flag信息，用于检查START目标是否等于活动槽位。*/
+    const Boot_FlagInfoTypeDef *flag_info;
+
+    /*检查START帧的长度、CRC和DATA内容*/
     if (Boot_ParseStartFrame(frame, frame_len, &start_info) == 0U)
     {
         printf("START_FRAME_ERROR\r\n");
-        /*
-         * START帧长度、内容或者CRC错误。
-         */
+
+        /*START帧长度、内容或者CRC错误。*/
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_START_UPDATE,
@@ -516,6 +596,42 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
         target_slot = BOOT_SLOT_B;
     }
 
+    /*获取Boot_FlagInit()已经加载到RAM中的Flag。*/
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        printf("START_FLAG_INFO_ERROR\r\n");
+        /*无法确定当前活动槽位时，不允许擦除任何A/B备份区。*/
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            0U);
+        return;
+    }
+
+    /*禁止覆盖当前活动槽位,例如active_slot为A时，本次START只能选择B。*/
+    if ((flag_info->active_slot != BOOT_SLOT_NONE) &&
+        (target_slot == flag_info->active_slot))
+    {
+        printf("START_ACTIVE_SLOT_ERROR\r\n");
+        printf("ACTIVE_SLOT:%lu\r\n",(unsigned long)flag_info->active_slot);
+
+        /*
+        * 使用STATE_ERROR表示当前设备状态
+        * 不允许更新这个目标。
+        *
+        * value返回当前active_slot，
+        * 方便Qt定位错误原因。
+        */
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            (uint32_t)flag_info->active_slot);
+        return;
+    }
     /*
      * 计算运行区容量。
      */
@@ -1108,32 +1224,37 @@ static void Boot_ProcessProtocolFrame(void)
      */
     switch ((Boot_CmdTypeDef)cmd)
     {
-    case CMD_START_UPDATE:
-        Boot_HandleStartFrame(frame, frame_len);
-        break;
 
-    case CMD_DATA_PACKET:
-        Boot_HandleDataFrame(frame, frame_len);
-        break;
+        case CMD_GET_INFO:
+            Boot_HandleGetInfoFrame(frame, frame_len);
+            break;
+            
+        case CMD_START_UPDATE:
+            Boot_HandleStartFrame(frame, frame_len);
+            break;
 
-    case CMD_END_UPDATE:
-        Boot_HandleEndFrame(frame, frame_len);
-        break;
+        case CMD_DATA_PACKET:
+            Boot_HandleDataFrame(frame, frame_len);
+            break;
 
-    default:
-        printf("UNKNOWN_CMD:0x%04X\r\n", (unsigned int)cmd);
-        /*
-         * 收到当前Bootloader不支持的命令。
-         *
-         * request_cmd保留上位机发送的原始命令，
-         * 方便上位机确认是哪一条命令不被支持。
-         */
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            (Boot_CmdTypeDef)cmd,
-            BOOT_RESULT_UNKNOWN_CMD,
-            0U);
-        break;
+        case CMD_END_UPDATE:
+            Boot_HandleEndFrame(frame, frame_len);
+            break;
+
+        default:
+            printf("UNKNOWN_CMD:0x%04X\r\n", (unsigned int)cmd);
+            /*
+            * 收到当前Bootloader不支持的命令。
+            *
+            * request_cmd保留上位机发送的原始命令，
+            * 方便上位机确认是哪一条命令不被支持。
+            */
+            (void)Boot_SendResponse(
+                CMD_NACK,
+                (Boot_CmdTypeDef)cmd,
+                BOOT_RESULT_UNKNOWN_CMD,
+                0U);
+            break;
     }
 
     /*

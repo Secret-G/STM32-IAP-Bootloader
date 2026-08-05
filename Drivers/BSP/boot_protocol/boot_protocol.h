@@ -196,6 +196,8 @@ typedef enum
     CMD_END_UPDATE = 0x0004,
     CMD_CHECK_UPDATE = 0x0005,
     CMD_JUMP_APP = 0x0006,
+    CMD_GET_INFO = 0x0007,
+
     CMD_ACK          = 0x8000,
     CMD_NACK         = 0x8001
 }Boot_CmdTypeDef;
@@ -205,62 +207,38 @@ typedef enum
  */
 typedef enum
 {
-    /*
-     * 请求处理成功，只用于ACK。
-     */
+    /*请求处理成功，只用于ACK。*/
     BOOT_RESULT_OK = 0x0000,
 
-    /*
-     * 协议帧长度、CMD或者帧CRC错误。
-     */
+    /*协议帧长度、CMD或者帧CRC错误。*/
     BOOT_RESULT_FRAME_ERROR = 0x0001,
 
-    /*
-     * 当前升级状态不允许处理该命令。
-     * 例如没有START就发送DATA或END。
-     */
+    /*当前升级状态不允许处理该命令。*/
     BOOT_RESULT_STATE_ERROR = 0x0002,
 
-    /*
-     * START声明的BIN文件超过目标区域容量。
-     */
+    /*START声明的BIN文件超过目标区域容量。*/
     BOOT_RESULT_IMAGE_TOO_LARGE = 0x0003,
 
-    /*
-     * DATA包序号与期望序号不一致。
-     */
+    /* DATA包序号与期望序号不一致。*/
     BOOT_RESULT_SEQUENCE_ERROR = 0x0004,
 
-    /*
-     * DATA内容超过START声明的剩余文件长度。
-     */
+    /*DATA内容超过START声明的剩余文件长度。*/
     BOOT_RESULT_DATA_TOO_LARGE = 0x0005,
 
-    /*
-     * Flash擦除、写入或者缓存刷新失败。
-     */
+    /*Flash擦除、写入或者缓存刷新失败。*/
     BOOT_RESULT_FLASH_ERROR = 0x0006,
 
-    /*
-     * END声明的DATA总包数不正确。
-     */
+    /*END声明的DATA总包数不正确。*/
     BOOT_RESULT_PACKET_COUNT_ERROR = 0x0007,
 
-    /*
-     * 实际接收字节数与START声明的文件大小不一致。
-     */
+    /*实际接收字节数与START声明的文件大小不一致。*/
     BOOT_RESULT_IMAGE_SIZE_ERROR = 0x0008,
 
-    /*
-     * Flash中的整个BIN CRC校验失败。
-     */
+    /*Flash中的整个BIN CRC校验失败。*/
     BOOT_RESULT_IMAGE_CRC_ERROR = 0x0009,
 
-    /*
-     * 收到了当前Bootloader不支持的CMD。
-     */
+    /*收到了当前Bootloader不支持的CMD。*/
     BOOT_RESULT_UNKNOWN_CMD = 0x000A
-
 } Boot_ResultTypeDef;
 
 

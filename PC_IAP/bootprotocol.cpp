@@ -33,6 +33,8 @@ quint16 BootProtocol::crc16Modbus(const QByteArray &data)
     return crc;
 }
 
+
+
 QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, quint32 reserveValue)
 {
     if(data.size() > 256)
@@ -88,6 +90,19 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
     appendUint16LE(frame, crc);
 
     return frame;
+}
+
+
+QByteArray BootProtocol::buildGetInfoFrame()
+{
+    /*
+     * GET_INFO不需要DATA，
+     * 所以传入一个空QByteArray。
+     *
+     * 请求帧的RESERVE目前也不使用，
+     * 因此传入0。
+     */
+    return buildFrame( static_cast<quint16>(CmdGetInfo),QByteArray(),0U);
 }
 
 QByteArray BootProtocol::buildStartFrame(quint8 target, quint32 imageSize, quint16 imageCrc)

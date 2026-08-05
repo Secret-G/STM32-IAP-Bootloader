@@ -196,7 +196,6 @@ typedef enum
     CMD_END_UPDATE = 0x0004,
     CMD_CHECK_UPDATE = 0x0005,
     CMD_JUMP_APP = 0x0006,
-    CMD_GET_INFO = 0x0007,
 
     CMD_ACK          = 0x8000,
     CMD_NACK         = 0x8001
@@ -254,9 +253,17 @@ typedef enum
 
 typedef enum
 {
-    UPDATE_NONE = 0,
-    UPDATE_APP_A,
-    UPDATE_APP_B
+    /*无效或者尚未确定升级目标。*/
+    UPDATE_NONE  = 0,
+
+    /*明确指定A区。*/
+    UPDATE_APP_A = 1,
+
+    /*明确指定B区。*/
+    UPDATE_APP_B = 2,
+
+    /*不由上位机指定A/B，Bootloader根据active_slot自动选择非活动槽位。*/
+    UPDATE_AUTO  = 3
 }Update_TargetTypeDef;
 
 typedef struct
@@ -470,9 +477,7 @@ void Boot_RxInit(Boot_RxContextTypeDef *context);
  * @return BOOT_RX_WAITING、BOOT_RX_FRAME_READY
  *         或BOOT_RX_FRAME_ERROR。
  */
-Boot_RxResultTypeDef Boot_RxInputByte(
-    Boot_RxContextTypeDef *context,
-    uint8_t byte);
+Boot_RxResultTypeDef Boot_RxInputByte(Boot_RxContextTypeDef *context,uint8_t byte);
 
 /**
  * @brief 获取已经接收完成的协议帧。

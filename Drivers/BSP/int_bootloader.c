@@ -9,16 +9,20 @@
 /*Bootloader上电后等待升级命令的时间,3000ms等于3秒。*/
 #define BOOT_WAIT_TIMEOUT_MS 3000U
 
-/*
- * 本次上电是否已经执行过启动决定。
- *
- * 0：还在等待；
- * 1：已经尝试过安装或跳转。
- */
+/*给Qt和USB转串口预留接收END ACK的时间。*/
+#define BOOT_RESET_DELAY_MS  100U
+
+/*本次上电是否已经执行过启动决定。*/
 static uint8_t boot_start_decision_done = 0U;
 
 /*Bootloader开始等待升级命令时的系统毫秒数。*/
 static uint32_t boot_wait_start_tick = 0U;
+
+/*END应答成功发送后置1，通知主循环执行延迟软件复位。*/
+static uint8_t boot_reset_pending = 0U;
+
+/*记录END ACK发送完成时的系统Tick，用于非阻塞延时。*/
+static uint32_t boot_reset_start_tick = 0U;
 
 static uint8_t boot_copy_buffer[BOOT_COPY_BUFFER_SIZE] = {0};
 
@@ -386,107 +390,64 @@ static HAL_StatusTypeDef Boot_SendResponse(
         100U);
 }
 
+
 /**
- * @brief 处理GET_INFO查询帧。
+ * @brief 根据当前活动槽位选择本次实际升级目标。
  *
- * GET_INFO没有DATA，完整帧长度固定为10字节。
- * 查询成功后，通过ACK的value返回active_slot。
+ * @param requested_target START帧中携带的目标选择方式。
+ *
+ * @return UPDATE_APP_A、UPDATE_APP_B或者UPDATE_NONE。
  */
-static void Boot_HandleGetInfoFrame(uint8_t *frame,uint16_t frame_len)
+static Update_TargetTypeDef Boot_SelectUpdateTarget(Update_TargetTypeDef requested_target)
 {
     const Boot_FlagInfoTypeDef *flag_info;
-    uint16_t cmd;
-    uint16_t total_len;
-    uint16_t received_crc;
-    uint16_t calculated_crc;
-
-    /*GET_INFO没有DATA，所以完整帧必须刚好等于最小帧长度10字节。*/
-    if ((frame == NULL) || (frame_len != BOOT_FRAME_MIN_SIZE))
-    {
-        printf("GET_INFO_LENGTH_ERROR\r\n");
-
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_GET_INFO,
-            BOOT_RESULT_FRAME_ERROR,
-            frame_len);
-
-        return;
-    }
-
-    /*解析CMD和帧内部声明的总长度。*/
-    cmd = Boot_ParseCmd(frame);
-
-    total_len =(uint16_t)frame[2] | ((uint16_t)frame[3] << 8U);
-
-    /*同时检查命令和帧内部长度*/
-    if ((cmd != (uint16_t)CMD_GET_INFO) || (total_len != frame_len))
-    {
-        printf("GET_INFO_FRAME_ERROR\r\n");
-
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_GET_INFO,
-            BOOT_RESULT_FRAME_ERROR,
-            total_len);
-        return;
-    }
-
-    /*取出帧尾保存的CRC。*/
-    received_crc = Boot_ParseCRC(frame, frame_len);
-
-    /*CRC只计算前8字节，不包含最后2字节CRC字段本身。*/
-    calculated_crc = Boot_CRC16_Modbus(frame,frame_len - BOOT_FRAME_CRC_SIZE);
-
-    if (received_crc != calculated_crc)
-    {
-        printf("GET_INFO_CRC_ERROR\r\n");
-
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_GET_INFO,
-            BOOT_RESULT_FRAME_ERROR,
-            received_crc);
-        return;
-    }
-
-    /*
-     * Boot_FlagInit()在初始化阶段已经把Flash标志
-     * 读取到了boot_flag_info中。
+     /*
+     * 如果上位机明确指定了A或B，
+     * 暂时保留原有调试能力。
      *
-     * 这里取得的是RAM中这份标志信息的地址，
-     * 不会再次擦写Flash。
+     * 是否允许覆盖活动槽位，
+     * 后面仍然由START安全检查负责。
      */
+    if ((requested_target == UPDATE_APP_A) ||
+        (requested_target == UPDATE_APP_B))
+    {
+        return requested_target;
+    }
+
+     /*除A、B、AUTO以外的目标都是非法值。*/
+    if (requested_target != UPDATE_AUTO)
+    {
+        return UPDATE_NONE;
+    }
+
+    /*AUTO模式需要读取当前活动槽位。*/
     flag_info = Boot_FlagGetInfo();
 
     if (flag_info == NULL)
     {
-        printf("GET_INFO_FLAG_ERROR\r\n");
-
-        (void)Boot_SendResponse(
-            CMD_NACK,
-            CMD_GET_INFO,
-            BOOT_RESULT_STATE_ERROR,
-            0U);
-
-        return;
+        return UPDATE_NONE;
     }
 
-    printf("GET_INFO_OK\r\n");
-    printf("ACTIVE_SLOT:%lu\r\n",(unsigned long)flag_info->active_slot);
+    /*当前Run区来自A，新固件写入非活动的B区。*/
+    if (flag_info->active_slot == BOOT_SLOT_A)
+    {
+        return UPDATE_APP_B;
+    }
 
-    /*
-     * value返回活动槽位：
-     *
-     * 0：BOOT_SLOT_NONE
-     * 1：BOOT_SLOT_A
-     * 2：BOOT_SLOT_B
-     */
-    (void)Boot_SendResponse(
-        CMD_ACK,
-        CMD_GET_INFO,
-        BOOT_RESULT_OK,
-        (uint32_t)flag_info->active_slot);
+    /*当前Run区来自B，新固件写入非活动的A区*/
+    if (flag_info->active_slot == BOOT_SLOT_B)
+    {
+        return UPDATE_APP_A;
+    }
+
+     /*第一次升级还没有活动槽位，约定默认先写入A区。*/
+    if (flag_info->active_slot == BOOT_SLOT_NONE)
+    {
+        return UPDATE_APP_A;
+    }
+
+    /*active_slot出现了协议未定义的数值。*/
+    return UPDATE_NONE;
 }
 
 /**
@@ -498,6 +459,11 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     HAL_StatusTypeDef status;
     uint32_t target_region_size;
     uint32_t run_region_size;
+    /*
+    * 保存START帧最初请求的目标。
+    * AUTO解析后，start_info.target会被替换成实际A/B。
+    */
+    Update_TargetTypeDef requested_target;
 
     /*START目标转换成Flag模块使用的槽位*/
     Boot_SlotTypeDef target_slot;
@@ -520,7 +486,35 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     }
 
     printf("START_FRAME_OK\r\n");
-    printf("TARGET:%u\r\n", (unsigned int)start_info.target);
+
+   /*
+    * 保存协议帧中的原始目标。
+    *
+    * Qt以后发送的将是UPDATE_AUTO。
+    */
+    requested_target = start_info.target;
+
+   /*
+    * 将AUTO转换为实际的A区或者B区。
+    *
+    * 这一步必须发生在重复START判断之前，
+    * 保证AUTO重发时仍然能够得到相同的实际目标。
+    */
+    start_info.target = Boot_SelectUpdateTarget(requested_target);
+    if (start_info.target == UPDATE_NONE)
+    {
+        printf("START_SELECT_TARGET_ERROR\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            (uint32_t)requested_target);
+
+        return;
+    }
+    printf("REQUEST_TARGET:%u\r\n",(unsigned int)requested_target);
+    printf("SELECTED_TARGET:%u\r\n",(unsigned int)start_info.target);
     printf("IMAGE_SIZE:%lu\r\n", (unsigned long)start_info.image_size);
     printf("IMAGE_CRC:0x%04X\r\n", (unsigned int)start_info.image_crc);
 
@@ -568,6 +562,8 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
             return;
         }
 
+
+
         printf("UPDATE_BUSY\r\n");
         /*
          * 当前状态不允许再次执行START。
@@ -581,6 +577,21 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
         return;
     }
+
+    if (protocol_update_state != BOOT_IDLE)
+    {
+         printf("START_STATE_ERROR\r\n");
+         printf("UPDATE_STATE:%u\r\n",(unsigned int)protocol_update_state);
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_STATE_ERROR,
+            (uint32_t)protocol_update_state);
+        return;
+    }
+
+
 
     /*
      * 根据目标计算A区或者B区容量。
@@ -1178,14 +1189,36 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     printf("UPDATE_READY\r\n");
 
     /*
-     * 固件大小、包数和整个BIN CRC和flag全部正确。
-     * value返回成功接收的DATA总包数。
-     */
-    (void)Boot_SendResponse(
+    * 先把END成功应答完整发送给Qt。
+    */
+    status = Boot_SendResponse(
         CMD_ACK,
         CMD_END_UPDATE,
         BOOT_RESULT_OK,
         protocol_expected_sequence);
+
+    if (status != HAL_OK)
+    {
+        /*
+        * ACK发送失败时暂时不复位。
+        *
+        * Qt没有收到ACK会重发END，
+        * STM32仍有机会重新返回应答。
+        */
+        printf("END_ACK_SEND_ERROR\r\n");
+        return;
+    }
+
+    /*
+    * END ACK已经由阻塞式HAL_UART_Transmit发送完成。
+    *
+    * 这里只登记复位任务，
+    * 不在协议处理函数中直接复位。
+    */
+    boot_reset_start_tick = HAL_GetTick();
+    boot_reset_pending = 1U;
+
+    printf("AUTO_RESET_PENDING\r\n");
 }
 
 /**
@@ -1224,11 +1257,6 @@ static void Boot_ProcessProtocolFrame(void)
      */
     switch ((Boot_CmdTypeDef)cmd)
     {
-
-        case CMD_GET_INFO:
-            Boot_HandleGetInfoFrame(frame, frame_len);
-            break;
-            
         case CMD_START_UPDATE:
             Boot_HandleStartFrame(frame, frame_len);
             break;
@@ -1340,6 +1368,32 @@ void Bootloader_Process(void)
                 */
                 printf("BOOT_AUTO_PREPARE_FAILED\r\n");
             }
+        }
+    }
+    /*
+    * END ACK发送完成后，
+    * 等待一小段时间再执行软件复位。
+    */
+    if (boot_reset_pending != 0U)
+    {
+        /*
+        * 使用无符号减法判断时间，
+        * 即使HAL_GetTick发生回绕也能正常工作。
+        */
+        if ((HAL_GetTick() - boot_reset_start_tick) >= BOOT_RESET_DELAY_MS)
+        {
+            printf("AUTO_RESET_NOW\r\n");
+
+            /*
+            * 确保编译器和CPU已经完成前面的内存操作。
+            */
+            __DSB();
+            __ISB();
+
+            /*
+            * 触发Cortex-M系统软件复位。
+            */
+            NVIC_SystemReset();
         }
     }
 }

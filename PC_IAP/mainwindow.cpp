@@ -267,20 +267,7 @@ void MainWindow::selectBinFile()
 
 void MainWindow::startUpgrade()
 {
-    /*按下“开始升级”时，暂时不发送START，先向STM32查询当前active_slot。*/
-    if (!sendGetInfoFrame())
-    {
-        ui->labelUpgradeStatusValue->setText("查询活动槽位失败");
-        return;
-    }
-
-    /*
-     * 查询期间禁止重复点击开始升级。
-     */
-    ui->pushButtonStartUpgrade->setEnabled(false);
-
-    ui->labelUpgradeStatusValue->setText("正在查询当前活动槽位");
-
+    sendStartFrame();
 }
 
 void MainWindow::sendStartFrame()
@@ -299,17 +286,6 @@ void MainWindow::sendStartFrame()
         return;
     }
 
-    /*
-     * 确定升级目标：
-     * 1 = A区
-     * 2 = B区
-     */
-    quint8 target = 1U;
-
-    if (ui->radioButtonTargetB->isChecked())
-    {
-        target = 2U;
-    }
 
     const quint32 imageSize = static_cast<quint32>(firmwareData.size());
     const quint16 imageCrc = BootProtocol::crc16Modbus(firmwareData);
@@ -334,7 +310,7 @@ void MainWindow::sendStartFrame()
     ui->plainTextEditLog->appendPlainText(QString("[升级] BIN大小=%1字节，DATA总包数=%2").arg(imageSize).arg(totalPacketCount));
 
     /*根据目标、整个BIN大小和整个BIN CRC,构造完整START协议帧。*/
-    const QByteArray startFrame = BootProtocol::buildStartFrame(target,imageSize,imageCrc);
+    const QByteArray startFrame = BootProtocol::buildStartFrame(imageSize,imageCrc);
 
     if (startFrame.isEmpty())
     {
@@ -406,19 +382,15 @@ void MainWindow::sendStartFrame()
      * 防止用户中途更换。
      */
     ui->pushButtonStartUpgrade->setEnabled(false);
-    ui->pushButtonBrowseBin->setEnabled(false);
-    ui->radioButtonTargetA->setEnabled(false);
-    ui->radioButtonTargetB->setEnabled(false);
-
     ui->labelUpgradeStatusValue->setText("等待START应答");
     ui->labelLastResponseValue->setText("--");
-    ui->plainTextEditLog->appendPlainText(
-                QString("[发送] START，目标=%1，大小=%2，CRC=0x%3")
-                .arg(target).arg(imageSize)
-                .arg(QString::number(imageCrc, 16).rightJustified(4, '0').toUpper()));
+    ui->plainTextEditLog->appendPlainText(QString("[发送] START，目标=自动选择，大小=%1，CRC=0x%2")
+                                              .arg(imageSize)
+                                              .arg(QString::number(imageCrc, 16)
+                                              .rightJustified(4, '0')
+                                              .toUpper()));
 
-    ui->plainTextEditLog->appendPlainText("[发送] " +
-                QString::fromLatin1(startFrame.toHex(' ').toUpper()));
+    ui->plainTextEditLog->appendPlainText("[发送] " + QString::fromLatin1(startFrame.toHex(' ').toUpper()));
 
 }
 
@@ -470,52 +442,32 @@ void MainWindow::onSerialReadyRead()
             ui->labelLastResponseValue->setText("ACK");
             ui->plainTextEditLog->appendPlainText(QString("[应答] ACK，原命令=0x%1，" "结果=0x%2，附加值=%3").arg(QString::number(response.requestCommand,16).rightJustified(4, '0').toUpper()).arg(QString::number(response.result,16).rightJustified(4, '0').toUpper()).arg(response.value));
 
-            if ((response.requestCommand == BootProtocol::CmdGetInfo) &&
-                (response.result == BootProtocol::ResultOk))
+            if ((response.requestCommand == BootProtocol::CmdStartUpdate) &&
+                (response.result         == BootProtocol::ResultOk))
             {
-                /*GET_INFO已经收到正确ACK，停止查询应答定时器。*/
-                ackTimer->stop();
-                pendingFrame.clear();
-                pendingCommand = 0U;
-                retryCount = 0;
 
-                /*根据当前活动槽位，自动选择相反的升级目标。*/
-                if (response.value == BootProtocol::SlotA)
+                /*
+                 * START ACK的value是STM32实际选择的槽位。
+                 * Qt只显示结果，不参与选择。
+                 */
+                if (response.value == BootProtocol::TargetA)
                 {
-                    /*当前Run区来自A，因此下一份固件写入B。*/
-                    ui->radioButtonTargetB->setChecked(true);
-                    ui->plainTextEditLog->appendPlainText("[查询] 当前活动槽位=A，本次自动选择B区");
+                    ui->plainTextEditLog->appendPlainText("[升级] STM32自动选择A区接收固件");
                 }
-                else if (response.value == BootProtocol::SlotB)
+                else if (response.value == BootProtocol::TargetB)
                 {
-                    /*当前Run区来自B，因此下一份固件写入A。*/
-                    ui->radioButtonTargetA->setChecked(true);
-                    ui->plainTextEditLog->appendPlainText("[查询] 当前活动槽位=B，本次自动选择A区");
-                }
-                else if (response.value == BootProtocol::SlotNone)
-                {
-                    /*第一次升级还没有活动槽位，约定默认从A区开始。*/
-                    ui->radioButtonTargetA->setChecked(true);
-                    ui->plainTextEditLog->appendPlainText("[查询] 当前没有活动槽位，本次默认选择A区");
+                    ui->plainTextEditLog->appendPlainText("[升级] STM32自动选择B区接收固件");
                 }
                 else
                 {
-                    /*STM32返回了协议未定义的槽位值。*/
-                    ui->labelUpgradeStatusValue->setText("活动槽位信息错误");
-                    ui->plainTextEditLog->appendPlainText(QString("[查询] STM32返回未知活动槽位：%1").arg(response.value));
-                    ui->pushButtonStartUpgrade->setEnabled(true);
+                    ui->plainTextEditLog->appendPlainText(QString("[升级] STM32返回未知目标槽位：%1").arg(response.value));
+                    ui->labelUpgradeStatusValue->setText("START目标应答错误");
                     return;
                 }
-
-                /*现在目标区域已经自动确定，才真正构造并发送START帧。*/
-                sendStartFrame();
-            }
-            else if ((response.requestCommand == BootProtocol::CmdStartUpdate) &&
-                     (response.result         == BootProtocol::ResultOk))
-            {
                 /*START ACK已经到达，停止START应答定时器*/
                 ackTimer->stop();
                 pendingFrame.clear();
+                pendingCommand = 0U;
                 retryCount = 0;
 
                 ui->plainTextEditLog->appendPlainText("[升级] STM32已接受START命令");
@@ -629,42 +581,45 @@ void MainWindow::onSerialReadyRead()
                 pendingFrame.clear();
                 pendingCommand = 0U;
                 retryCount = 0;
-
                 /*
-                 * 此时STM32已经完成：
+                 * END成功只表示：
                  *
-                 * 1. 数据包数量检查
-                 * 2. 固件总大小检查
-                 * 3. Flash中固件CRC检查
+                 * 1. 固件已经完整写入备份槽位；
+                 * 2. STM32已经完成整个镜像CRC校验；
+                 * 3. Flag已经记录pending_slot。
                  *
-                 * 所以可以认为本次升级成功。
+                 * 新固件此时还没有安装到Run区。
                  */
-                const QString targetName = ui->radioButtonTargetB->isChecked() ? "B区(APP2)" : "A区(APP1)";
+                ui->labelUpgradeStatusValue->setText("固件接收成功，等待设备复位安装");
 
-                ui->labelUpgradeStatusValue->setText(QString("升级成功，固件已写入%1").arg(targetName));
-                ui->labelPacketProgressValue->setText(QString("%1 / %2").arg(totalPacketCount).arg(totalPacketCount));
+                ui->labelPacketProgressValue->setText(
+                    QString("%1 / %2")
+                        .arg(totalPacketCount)
+                        .arg(totalPacketCount));
 
                 ui->progressBarUpgrade->setValue(100);
-                ui->progressBarUpgrade->setFormat("%p% · 升级成功");
+                ui->progressBarUpgrade->setFormat( "%p% · 等待设备安装");
+
                 ui->plainTextEditLog->appendPlainText(
                     QString(
-                        "[升级成功] %1写入完成，"
-                        "共%2包，BIN大小=%3字节，"
-                        "STM32已完成Flash CRC校验")
-                        .arg(targetName)
+                        "[升级] 固件接收与CRC校验成功，"
+                        "共%1包，BIN大小=%2字节")
                         .arg(totalPacketCount)
                         .arg(firmwareData.size()));
 
-                /*一次升级已经结束，恢复文件选择和目标选择功能。*/
+                ui->plainTextEditLog->appendPlainText("[升级] STM32已记录待安装固件，""请复位设备完成安装");
 
+                /*
+                 * 当前固件还没有安装，
+                 * 不允许在同一次Bootloader会话中再次升级。
+                 */
+                ui->pushButtonStartUpgrade->setEnabled(false);
+
+                /*
+                 * 暂时允许重新选择文件也没有意义，
+                 * 等设备复位后再开始下一轮升级。
+                 */
                 ui->pushButtonBrowseBin->setEnabled(true);
-                ui->radioButtonTargetA->setEnabled(true);
-                ui->radioButtonTargetB->setEnabled(true);
-
-                /*串口仍然打开并且固件数据还存在时，允许再次升级。*/
-                ui->pushButtonStartUpgrade->setEnabled(
-                    serialPort->isOpen() &&
-                    !firmwareData.isEmpty());
             }
         }
         else
@@ -692,8 +647,6 @@ void MainWindow::onSerialReadyRead()
 
             /* NACK后允许用户重新选择并重试。*/
             ui->pushButtonBrowseBin->setEnabled(true);
-            ui->radioButtonTargetA->setEnabled(true);
-            ui->radioButtonTargetB->setEnabled(true);
 
             ui->pushButtonStartUpgrade->setEnabled(serialPort->isOpen() && !firmwareData.isEmpty());
         }
@@ -960,93 +913,6 @@ bool MainWindow::sendEndFrame()
 
 }
 
-bool MainWindow::sendGetInfoFrame()
-{
-    /*查询之前首先确认串口已经打开。*/
-    if (!serialPort->isOpen())
-    {
-        ui->labelUpgradeStatusValue->setText("串口未打开");
-        ui->plainTextEditLog->appendPlainText("[查询] GET_INFO发送失败：串口未打开");
-        return false;
-    }
-
-    /*
-     * 构造一张10字节GET_INFO请求帧。
-     */
-    const QByteArray getInfoFrame = BootProtocol::buildGetInfoFrame();
-
-    if (getInfoFrame.isEmpty())
-    {
-        ui->labelUpgradeStatusValue->setText("GET_INFO组帧失败");
-        ui->plainTextEditLog->appendPlainText("[查询] GET_INFO组帧失败");
-        return false;
-    }
-
-    responseBuffer.clear();
-
-    const qint64 written =  serialPort->write(getInfoFrame);
-    if (written != getInfoFrame.size())
-    {
-        ui->labelUpgradeStatusValue->setText("GET_INFO发送失败");
-
-        ui->plainTextEditLog->appendPlainText(
-            QString(
-                "[查询] GET_INFO写入发送缓存失败："
-                "需要%1字节，实际%2字节，错误：%3")
-                .arg(getInfoFrame.size())
-                .arg(written)
-                .arg(serialPort->errorString()));
-        return false;
-    }
-
-    /*
-     * 请求Qt立即把发送缓存交给底层串口驱动。
-     */
-    if (!serialPort->flush())
-    {
-        ui->labelUpgradeStatusValue->setText("GET_INFO刷新失败");
-        ui->plainTextEditLog->appendPlainText(
-            QString("[查询] GET_INFO刷新发送缓存失败：%1")
-                    .arg(serialPort->errorString()));
-        return false;
-    }
-
-    /*等待数据实际交给串口驱动。*/
-    if (!serialPort->waitForBytesWritten(1000))
-    {
-        ui->labelUpgradeStatusValue->setText("GET_INFO发送超时");
-        ui->plainTextEditLog->appendPlainText(
-            QString("[查询] GET_INFO物理发送超时：%1")
-                    .arg(serialPort->errorString()));
-        return false;
-    }
-
-    /*
-     * 保存当前正在等待确认的完整GET_INFO帧。
-     * 如果ACK丢失，超时函数可以重新发送同一张帧。
-     */
-    pendingFrame = getInfoFrame;
-
-    /*告诉应答处理代码：当前等待的是GET_INFO的应答*/
-    pendingCommand = static_cast<quint16>(BootProtocol::CmdGetInfo);
-
-    /*这是第一次发送，重试次数归零。*/
-    retryCount = 0;
-
-    /*开始等待STM32返回ACK/NACK。*/
-    ackTimer->start(AckTimeoutMs);
-
-    ui->labelUpgradeStatusValue->setText("正在查询当前活动槽位");
-
-    ui->plainTextEditLog->appendPlainText(
-        QString("[发送] GET_INFO，共%1字节")
-                .arg(getInfoFrame.size()));
-
-    ui->plainTextEditLog->appendPlainText("[发送] " +
-        QString::fromLatin1(getInfoFrame.toHex(' ').toUpper()));
-    return true;
-}
-
 void MainWindow::onAckTimeout()
 {
     /*
@@ -1083,8 +949,6 @@ void MainWindow::onAckTimeout()
 
         /*恢复界面，允许用户重新尝试。*/
         ui->pushButtonBrowseBin->setEnabled(true);
-        ui->radioButtonTargetA->setEnabled(true);
-        ui->radioButtonTargetB->setEnabled(true);
         ui->pushButtonStartUpgrade->setEnabled(serialPort->isOpen() && !firmwareData.isEmpty());
         return;
     }
@@ -1134,17 +998,11 @@ void MainWindow::onAckTimeout()
         }
     }
 
-
-
     /* 根据pendingCommand判断当前重发的是哪种帧。*/
     QString commandName;
 
     switch (pendingCommand)
     {
-
-        case BootProtocol::CmdGetInfo:
-            commandName = "GET_INFO";
-            break;
 
         case BootProtocol::CmdStartUpdate:
             commandName = "START";

@@ -100,8 +100,7 @@ Update_TargetTypeDef Boot_ParseStartTarget(uint8_t *frame)
         return UPDATE_NONE;
     }
 
-    start_target = frame[BOOT_FRAME_DATA_OFFSET +
-                         BOOT_START_TARGET_OFFSET];
+    start_target = frame[BOOT_FRAME_DATA_OFFSET + BOOT_START_TARGET_OFFSET];
     
     if(start_target == (uint8_t)UPDATE_APP_A)
     {
@@ -111,6 +110,11 @@ Update_TargetTypeDef Boot_ParseStartTarget(uint8_t *frame)
     if(start_target == (uint8_t)UPDATE_APP_B)
     {
         return UPDATE_APP_B;
+    }
+
+    if (start_target == (uint8_t)UPDATE_AUTO)
+    {
+        return UPDATE_AUTO;
     }
     
     return UPDATE_NONE;
@@ -498,7 +502,6 @@ uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context, uint8_t **frame, uint16_
 
     return 1U;
 }
-
 
 uint16_t Boot_BuildResponseFrame(
     uint8_t *frame,

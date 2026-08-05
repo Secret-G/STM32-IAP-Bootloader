@@ -41,9 +41,6 @@ private slots:
     /*构造并发送END帧。*/
     bool sendEndFrame();
 
-    /*向STM32发送GET_INFO查询帧，查询当前运行固件对应的active_slot*/
-    bool sendGetInfoFrame();
-
     /*等待STM32应答超时时调用。*/
     void onAckTimeout();
 

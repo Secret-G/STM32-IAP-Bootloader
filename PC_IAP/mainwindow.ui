@@ -343,14 +343,7 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
        <property name="spacing">
         <number>12</number>
        </property>
-       <item row="0" column="0">
-        <widget class="QLabel" name="labelBinFile">
-         <property name="text">
-          <string>BIN文件</string>
-         </property>
-        </widget>
-       </item>
-       <item row="0" column="1" colspan="5">
+       <item row="0" column="1" colspan="4">
         <widget class="QLineEdit" name="lineEditBinPath">
          <property name="readOnly">
           <bool>true</bool>
@@ -360,64 +353,7 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
          </property>
         </widget>
        </item>
-       <item row="0" column="6">
-        <widget class="QPushButton" name="pushButtonBrowseBin">
-         <property name="text">
-          <string>选择文件...</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="labelTarget">
-         <property name="text">
-          <string>升级目标</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="1">
-        <widget class="QRadioButton" name="radioButtonTargetA">
-         <property name="text">
-          <string>A区（APP1）</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">buttonGroupTarget</string>
-         </attribute>
-        </widget>
-       </item>
-       <item row="1" column="2">
-        <widget class="QRadioButton" name="radioButtonTargetB">
-         <property name="text">
-          <string>B区（APP2）</string>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">buttonGroupTarget</string>
-         </attribute>
-        </widget>
-       </item>
-       <item row="1" column="3">
-        <spacer name="horizontalSpacerFirmware">
-         <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>30</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
        <item row="1" column="4">
-        <widget class="QLabel" name="labelFileSize">
-         <property name="text">
-          <string>文件大小</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="5">
         <widget class="QLabel" name="labelFileSizeValue">
          <property name="minimumSize">
           <size>
@@ -430,7 +366,41 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
          </property>
         </widget>
        </item>
-       <item row="1" column="6">
+       <item row="1" column="0">
+        <widget class="QLabel" name="labelTarget">
+         <property name="text">
+          <string>升级策略</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="2">
+        <spacer name="horizontalSpacerFirmware">
+         <property name="orientation">
+          <enum>Qt::Orientation::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>30</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item row="0" column="5">
+        <widget class="QPushButton" name="pushButtonBrowseBin">
+         <property name="text">
+          <string>选择文件...</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="3">
+        <widget class="QLabel" name="labelFileSize">
+         <property name="text">
+          <string>文件大小</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="5">
         <layout class="QHBoxLayout" name="horizontalLayoutFileCrc">
          <item>
           <widget class="QLabel" name="labelFileCrc">
@@ -447,6 +417,20 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
           </widget>
          </item>
         </layout>
+       </item>
+       <item row="0" column="0">
+        <widget class="QLabel" name="labelBinFile">
+         <property name="text">
+          <string>BIN文件</string>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLabel" name="label">
+         <property name="text">
+          <string>设备自动选择安全槽位</string>
+         </property>
+        </widget>
        </item>
       </layout>
      </widget>
@@ -638,8 +622,6 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
   <tabstop>pushButtonOpenSerial</tabstop>
   <tabstop>lineEditBinPath</tabstop>
   <tabstop>pushButtonBrowseBin</tabstop>
-  <tabstop>radioButtonTargetA</tabstop>
-  <tabstop>radioButtonTargetB</tabstop>
   <tabstop>pushButtonStartUpgrade</tabstop>
   <tabstop>pushButtonCancelUpgrade</tabstop>
   <tabstop>plainTextEditLog</tabstop>
@@ -647,7 +629,4 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
  </tabstops>
  <resources/>
  <connections/>
- <buttongroups>
-  <buttongroup name="buttonGroupTarget"/>
- </buttongroups>
 </ui>

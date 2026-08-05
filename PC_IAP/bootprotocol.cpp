@@ -92,48 +92,26 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
     return frame;
 }
 
-
-QByteArray BootProtocol::buildGetInfoFrame()
+QByteArray BootProtocol::buildStartFrame(quint32 imageSize, quint16 imageCrc)
 {
-    /*
-     * GET_INFO不需要DATA，
-     * 所以传入一个空QByteArray。
-     *
-     * 请求帧的RESERVE目前也不使用，
-     * 因此传入0。
-     */
-    return buildFrame( static_cast<quint16>(CmdGetInfo),QByteArray(),0U);
-}
 
-QByteArray BootProtocol::buildStartFrame(quint8 target, quint32 imageSize, quint16 imageCrc)
-{
-    /*
-     * 目标只能是：
-     * 1 = A区
-     * 2 = B区
-     */
-    if ((target != 1U) && (target != 2U))
-    {
-        return QByteArray();
-    }
+
+    QByteArray data;
 
     if (imageSize == 0U)
     {
         return QByteArray();
     }
 
-    QByteArray data;
-
     /*
      * START的DATA固定7字节：
-     *
-     * DATA[0]    目标
      * DATA[1～4] 整个BIN大小
      * DATA[5～6] 整个BIN CRC16
      */
     data.reserve(7);
 
-    data.append(static_cast<char>(target));
+    data.append(static_cast<char>(TargetAuto));
+
     appendUint32LE(data, imageSize);
     appendUint16LE(data, imageCrc);
 
@@ -141,7 +119,7 @@ QByteArray BootProtocol::buildStartFrame(quint8 target, quint32 imageSize, quint
      * START帧暂时不使用RESERVE，
      * 因此传入0。
      */
-    return buildFrame(CmdStartUpdate, data, 0U);
+    return buildFrame(static_cast<quint16>(CmdStartUpdate), data, 0U);
 }
 
 QByteArray BootProtocol::buildDataFrame(const QByteArray &packetData, quint32 sequence)

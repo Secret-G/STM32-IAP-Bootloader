@@ -29,22 +29,22 @@ public:
         CmdStartUpdate = 0x0002,
         CmdDataPacket  = 0x0003,
         CmdEndUpdate   = 0x0004,
-        CmdGetInfo   = 0x0007,
 
         CmdAck         = 0x8000,
         CmdNack        = 0x8001
     };
 
     /*
-     * STM32 Flag中使用的固件槽位。
-     * 数值必须与STM32端BOOT_SLOT定义一致。
+     * START帧中的升级目标模式。
+     * 数值必须与STM32端Update_TargetTypeDef一致。
      */
-    enum Slot : quint32
-    {
-        SlotNone = 0U,
-        SlotA    = 1U,
-        SlotB    = 2U
-    };
+        enum UpdateTarget : quint8
+        {
+            TargetNone = 0U,
+            TargetA    = 1U,
+            TargetB    = 2U,
+            TargetAuto = 3U
+        };
 
     /*
      * STM32返回的处理结果。
@@ -84,11 +84,8 @@ public:
     /* 构造一张通用请求帧：*/
     static QByteArray buildFrame( quint16 command,const QByteArray &data,quint32 reserveValue);
 
-    /*构造GET_INFO查询帧。该命令不携带DATA，用于查询STM32当前的active_slot。*/
-    static QByteArray buildGetInfoFrame();
-
     /* 构造START升级帧。*/
-    static QByteArray buildStartFrame(quint8 target,quint32 imageSize,quint16 imageCrc);
+    static QByteArray buildStartFrame(quint32 imageSize,quint16 imageCrc);
 
     /* 构造一张DATA固件数据帧。*/
     static QByteArray buildDataFrame(const QByteArray &packetData,quint32 sequence);

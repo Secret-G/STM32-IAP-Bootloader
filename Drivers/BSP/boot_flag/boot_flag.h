@@ -14,7 +14,7 @@
  * 将来如果Boot_FlagInfoTypeDef字段发生变化，
  * 可以增加这个版本号，避免新版程序错误解析旧结构。
  */
-#define BOOT_FLAG_VERSION  1U
+#define BOOT_FLAG_VERSION  2U
 
 
 
@@ -115,6 +115,9 @@ typedef struct
     /*标志结构版本。必须等于BOOT_FLAG_VERSION。*/
     uint32_t version;
 
+    /*Flag事务序号。*/
+    uint32_t sequence;
+
     /*A区固件信息。*/
     Boot_ImageInfoTypeDef app_a;
 
@@ -138,12 +141,7 @@ typedef struct
 
 } Boot_FlagInfoTypeDef;
 
-/*
- * 初始化标志模块。
- *
- * Flash标志有效时直接读取使用；
- * Flash标志无效时创建并写入默认标志。
- */
+/*初始化标志模块。*/
 HAL_StatusTypeDef Boot_FlagInit(void);
 
 /*根据标志结构内容计算CRC16。*/
@@ -155,7 +153,7 @@ void Boot_FlagUpdateCRC(Boot_FlagInfoTypeDef *flag_info);
 /*检查结构中保存的CRC是否正确。*/
 uint8_t Boot_FlagCRCValid(const Boot_FlagInfoTypeDef *flag_info);
 
-/*将Flash标志区的完整48字节，复制到RAM结构体中。*/
+/*将Flash中的完整Flag结构复制到RAM结构体中。*/
 void Boot_FlagRead(Boot_FlagInfoTypeDef *flag_info);
 
 /*检查一份标志结构是否可以被使用。*/

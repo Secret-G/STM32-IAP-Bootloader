@@ -29,15 +29,23 @@
 #define BOOTLOADER_END_ADDR     (FLASH_SECTOR_4_ADDR - 1U)
 
 
-/* Flag */
+/*Flag副本0。*/
 #define FLAG_START_ADDR         FLASH_SECTOR_4_ADDR
 #define FLAG_END_ADDR           (FLASH_SECTOR_5_ADDR - 1U)
+
+/*Flag副本0*/
+#define FLAG_COPY0_ADDR         FLASH_SECTOR_4_ADDR
+#define FLAG_COPY0_END_ADDR     (FLASH_SECTOR_5_ADDR - 1U)
+
+/*Flag副本1*/
+#define FLAG_COPY1_ADDR         FLASH_SECTOR_11_ADDR
+#define FLAG_COPY1_END_ADDR     FLASH_END_ADDR
+
 
 
 /* Run APP */
 #define APP_RUN_ADDR            FLASH_SECTOR_5_ADDR
 #define APP_RUN_END_ADDR        (FLASH_SECTOR_7_ADDR - 1U)
-
 
 /* APP A */
 #define APP_A_ADDR              FLASH_SECTOR_7_ADDR

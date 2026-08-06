@@ -1,6 +1,8 @@
 #include "boot_flag.h"
 #include "boot_crc.h"
 
+#include <stddef.h>
+#include <string.h>
 /*
  * Bootloader当前使用的标志信息。
  *
@@ -9,15 +11,26 @@
  */
 static Boot_FlagInfoTypeDef boot_flag_info;
 
+/*
+ * 当前RAM中的boot_flag_info来自哪个Flash副本。
+ *
+ * 默认先指向COPY0。
+ * Boot_FlagInit()完成双副本检查后，
+ * 会把它改成真正选中的副本地址。
+ */
+static uint32_t boot_flag_current_addr = 0U;
+
+/*
+ * 从指定Flash副本地址读取一份完整Flag。
+ *
+ * 该函数只在boot_flag.c内部使用，
+ * 所以使用static，不放到boot_flag.h中。
+ */
+static void Boot_FlagReadCopy(uint32_t flash_addr, Boot_FlagInfoTypeDef *flag_info);
 
 uint32_t Boot_FlagReadMagic(void)
 {
-    /*
-     * Flash可以像普通只读存储器一样直接读取。
-     *
-     * FLAG_START_ADDR是0x08010000，
-     * 这里读取该地址开始的4个字节。
-     */
+    /*Flash可以像普通只读存储器一样直接读取。*/
     return *(volatile const uint32_t *)FLAG_START_ADDR;
 }
 
@@ -25,19 +38,14 @@ uint8_t Boot_FlagMagicValid(void)
 {
     uint32_t stored_magic;
 
-    /*
-     * 读取Flash中实际保存的magic。
-     */
+    /*读取Flash中实际保存的magic。*/
     stored_magic = Boot_FlagReadMagic();
 
-    /*
-     * 与我们规定的固定值比较。
-     */
+    /*与我们规定的固定值比较。*/
     if (stored_magic == BOOT_FLAG_MAGIC)
     {
         return 1U;
     }
-
     return 0U;
 }
 
@@ -54,6 +62,7 @@ void Boot_FlagSetDefault(Boot_FlagInfoTypeDef *flag_info)
     /*设置标志区基本信息*/
     flag_info->magic = BOOT_FLAG_MAGIC;
     flag_info->version = BOOT_FLAG_VERSION;
+    flag_info->sequence = 0U;
 
     /*设置A区固件信息*/
     flag_info->app_a.valid_mark = BOOT_IMAGE_INVALID_MARK;
@@ -81,35 +90,25 @@ void Boot_FlagSetDefault(Boot_FlagInfoTypeDef *flag_info)
 
     /*设置整个标志结构的CRC16*/
     flag_info->flag_crc = 0U;
-
 }
-
-
 
 uint16_t Boot_FlagCalculateCRC(const Boot_FlagInfoTypeDef *flag_info)
 {
-     uint32_t crc_length;
+    uint32_t crc_length;
 
     if (flag_info == NULL)
     {
         return 0U;
     }
 
-    /*
-     * 完整结构48字节，
-     * 最后的flag_crc占2字节。
-     *
-     * 所以实际参与CRC计算的是前46字节。
-     */
-    crc_length = sizeof(Boot_FlagInfoTypeDef) - sizeof(flag_info->flag_crc);
+    /*CRC覆盖从结构体开头到flag_crc字段之前的所有字节*/
+    crc_length = (uint32_t)offsetof(Boot_FlagInfoTypeDef, flag_crc);
 
-        /*
+    /*
      * CRC函数按字节处理数据，
      * 所以把结构体地址转换成uint8_t指针。
      */
-    return Boot_CRC16_Modbus((const uint8_t *)flag_info,crc_length);
-
-
+    return Boot_CRC16_Modbus((const uint8_t *)flag_info, crc_length);
 }
 
 void Boot_FlagUpdateCRC(Boot_FlagInfoTypeDef *flag_info)
@@ -119,10 +118,6 @@ void Boot_FlagUpdateCRC(Boot_FlagInfoTypeDef *flag_info)
         return;
     }
 
-    /*
-     * 计算前46字节的CRC，
-     * 保存到最后2字节。
-     */
     flag_info->flag_crc = Boot_FlagCalculateCRC(flag_info);
 }
 
@@ -151,68 +146,60 @@ uint8_t Boot_FlagCRCValid(const Boot_FlagInfoTypeDef *flag_info)
     return 0U;
 }
 
-void Boot_FlagRead(Boot_FlagInfoTypeDef *flag_info)
+/*从指定Flash副本地址读取一份完整Flag。*/
+static void Boot_FlagReadCopy(uint32_t flash_addr, Boot_FlagInfoTypeDef *flag_info)
 {
     uint32_t i;
 
     const volatile uint8_t *flash_data;
+
     uint8_t *ram_data;
 
+    /*调用者没有提供RAM保存地址*/
     if (flag_info == NULL)
     {
         return;
     }
 
     /*
-     * flash_data指向Flash标志区起始地址。
+     * 只允许读取我们规划的两个Flag副本，
+     * 防止错误地址被当成Flag解析。
      */
-    flash_data = (const volatile uint8_t *)FLAG_START_ADDR;
+    if ((flash_addr != FLAG_COPY0_ADDR) && (flash_addr != FLAG_COPY1_ADDR))
+    {
+        return;
+    }
 
-    /*
-     * ram_data指向RAM中的标志结构体。
-     */
+    /*Flash能够像只读内存一样直接访问。*/
+    flash_data = (const volatile uint8_t *)flash_addr;
+
+    /*将输出结构体地址转换成字节指针*/
     ram_data = (uint8_t *)flag_info;
 
-    /*
-     * 逐字节复制Flash中的数据到RAM结构体中。
-     */
+    /*将Flash中的完整Flag结构逐字节复制到RAM。*/
     for (i = 0U; i < sizeof(Boot_FlagInfoTypeDef); i++)
     {
         ram_data[i] = flash_data[i];
     }
+}
 
+void Boot_FlagRead(Boot_FlagInfoTypeDef *flag_info)
+{
+    Boot_FlagReadCopy(boot_flag_current_addr, flag_info);
 }
 
 uint8_t Boot_FlagInfoValid(const Boot_FlagInfoTypeDef *flag_info)
 {
-    if (flag_info == NULL)
-    {
-        return 0U;
-    }
+    if (flag_info == NULL){ return 0U;  }
 
-    /*
-     * 检查magic是否正确。
-     */
-    if (flag_info->magic != BOOT_FLAG_MAGIC)
-    {
-        return 0U;
-    }
+    /*检查magic是否正确。*/
+    if (flag_info->magic != BOOT_FLAG_MAGIC){   return 0U;  }
 
-    /*
-     * 检查version是否正确。
-     */
-    if (flag_info->version != BOOT_FLAG_VERSION)
-    {
-        return 0U;
-    }
+    /*检查version是否正确。*/
+    if (flag_info->version != BOOT_FLAG_VERSION){   return 0U;  }
 
-    /*
-     * 检查整个结构的CRC是否正确。
-     */
-    if (Boot_FlagCRCValid(flag_info) == 0U)
-    {
-        return 0U;
-    }
+    /*检查整个结构的CRC是否正确。*/
+    if (Boot_FlagCRCValid(flag_info) == 0U){   return 0U;  }
 
     return 1U;
 }
@@ -220,97 +207,207 @@ uint8_t Boot_FlagInfoValid(const Boot_FlagInfoTypeDef *flag_info)
 HAL_StatusTypeDef Boot_FlagWrite(Boot_FlagInfoTypeDef *flag_info)
 {
     HAL_StatusTypeDef status;
+
+    Boot_FlagInfoTypeDef candidate;
+    Boot_FlagInfoTypeDef verify_info;
+
+    uint32_t target_addr;
+    uint32_t target_sector;
+
+    /*调用者没有提供需要提交的Flag信息。*/
+    if (flag_info == NULL){ return HAL_ERROR;   }
+
+    candidate = *flag_info;
+
+    /*每成功提交一次新Flag，sequence都应该比当前状态增加1。*/
+    candidate.sequence = flag_info->sequence + 1U;
+
+    /*根据候选副本的全部字段重新计算CRC*/
+    Boot_FlagUpdateCRC(&candidate);
+
     /*
-     * 调用者没有提供标志结构。
+     * 选择当前有效副本的另一侧作为写入目标。
+     *
+     * 当前是COPY0：
+     * 新状态写到COPY1。
      */
-    if (flag_info == NULL)
+    if (boot_flag_current_addr == FLAG_COPY0_ADDR)
+    {
+        target_addr = FLAG_COPY1_ADDR;
+        target_sector = FLASH_SECTOR_11;
+    }
+    /*当前是COPY1：新状态写到COPY0。*/
+    else if (boot_flag_current_addr == FLAG_COPY1_ADDR)
+    {
+        target_addr = FLAG_COPY0_ADDR;
+        target_sector = FLASH_SECTOR_4;
+    }
+
+    /*当前还没有有效副本：第一份默认Flag写入COPY0*/
+    else if (boot_flag_current_addr == 0U)
+    {
+        target_addr = FLAG_COPY0_ADDR;
+        target_sector = FLASH_SECTOR_4;
+    }
+
+    /*current_addr出现非法地址。*/
+    else
     {
         return HAL_ERROR;
     }
 
     /*
-     * 写入Flash之前，根据当前结构内容
-     * 重新计算并保存flag_crc。
+     * 只擦除即将写入的新副本。
+     *
+     * 当前旧副本保持不动，
+     * 因此这里掉电也不会丢失旧状态。
      */
-    Boot_FlagUpdateCRC(flag_info);
-
-    /*
-     * Flag区位于Sector 4。
-     * 所以写入新标志之前必须先擦除整个扇区。
-     */
-    status = Flash_EraseSector(FLASH_SECTOR_4);
-
+    status = Flash_EraseSector(target_sector);
     if (status != HAL_OK)
     {
         return status;
     }
 
-    /*
-     * 从FLAG_START_ADDR开始，
-     * 写入完整的48字节标志结构。
+     /*
+     * 将完整候选Flag写入目标副本。
      */
-    status = Flash_Write(FLAG_START_ADDR,(uint8_t *)flag_info, sizeof(Boot_FlagInfoTypeDef));
-    
-    return status;
-}
-HAL_StatusTypeDef Boot_FlagInit(void)
-{
-    HAL_StatusTypeDef status;
-    /*
-     * 先把Flash标志区中的48字节
-     * 复制到RAM全局结构体中。
-     */
-    Boot_FlagRead(&boot_flag_info);
+    status = Flash_Write(target_addr,(uint8_t *)&candidate,sizeof(Boot_FlagInfoTypeDef));
+    if (status != HAL_OK)
+    {
+        return status;
+    }
+
+    /*从Flash目标地址重新读取，不能直接相信Flash_Write()的返回值。*/
+    Boot_FlagReadCopy(target_addr,&verify_info);
+
+    /*先检查Magic、Version和CRC*/
+    if (Boot_FlagInfoValid(&verify_info) == 0U){    return HAL_ERROR;   }
 
     /*
-     * Flash中已有合法标志，
-     * 不擦除、不重写，直接使用。
+     * 再逐字节比较：
+     *
+     * candidate是准备写入的数据；
+     * verify_info是Flash真实回读的数据。
+     *
+     * 返回0才表示52字节完全相同。
      */
-    if (Boot_FlagInfoValid(&boot_flag_info) != 0U)
+    if (memcmp(&candidate, &verify_info, sizeof(Boot_FlagInfoTypeDef)) != 0)
     {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 到这里才表示事务提交成功：
+     *
+     * 1. 目标扇区擦除成功；
+     * 2. 新Flag写入成功；
+     * 3. 回读结构有效；
+     * 4. 回读内容完全相同。
+     *
+     * 现在才允许切换当前有效副本。
+     */
+    boot_flag_current_addr = target_addr;
+
+    /*
+     * 同时更新调用者提供的结构，
+     * 让它获得最新sequence和CRC。
+     *
+     * 当前调用者通常就是&boot_flag_info，
+     * 但这里仍然保持接口完整。
+     */
+    *flag_info = verify_info;
+
+    return HAL_OK;
+
+}
+
+HAL_StatusTypeDef Boot_FlagInit(void)
+
+{
+    HAL_StatusTypeDef status;
+    Boot_FlagInfoTypeDef copy0_info;
+    Boot_FlagInfoTypeDef copy1_info;
+
+    uint8_t copy0_valid;
+    uint8_t copy1_valid;
+
+    /*分别读取Sector 4和Sector 11中的Flag副本。*/
+    Boot_FlagReadCopy(FLAG_COPY0_ADDR, &copy0_info);
+    Boot_FlagReadCopy(FLAG_COPY1_ADDR, &copy1_info);
+
+    copy0_valid = Boot_FlagInfoValid(&copy0_info);
+    copy1_valid = Boot_FlagInfoValid(&copy1_info);
+
+    /*两份都有效：选择sequence更大的副本。*/
+    if ((copy0_valid != 0U) && (copy1_valid != 0U))
+    {
+        if (copy1_info.sequence > copy0_info.sequence)
+        {
+            boot_flag_info = copy1_info;
+            boot_flag_current_addr = FLAG_COPY1_ADDR;
+        }
+        else
+        {
+            /*COPY0的sequence更大，或者两份sequence相等时，确定性地选择COPY0。*/
+            boot_flag_info = copy0_info;
+            boot_flag_current_addr = FLAG_COPY0_ADDR;
+        }
+        return HAL_OK;
+    }
+
+    /*只有COPY0有效。*/
+    if (copy0_valid != 0U)
+    {
+        boot_flag_info = copy0_info;
+        boot_flag_current_addr = FLAG_COPY0_ADDR;
+        return HAL_OK;
+    }
+
+    /*只有COPY1有效。*/
+    if (copy1_valid != 0U)
+    {
+        boot_flag_info = copy1_info;
+        boot_flag_current_addr = FLAG_COPY1_ADDR;
         return HAL_OK;
     }
 
     /*
-     * Flash标志不存在或者已经损坏，
-     * 在RAM中生成默认内容。
+     * 两份副本都无效。
+     *
+     * 可能是：
+     * 1. 芯片第一次运行；
+     * 2. Flash仍然是0xFF；
+     * 3. 旧版V1 Flag；
+     * 4. 两份副本都已损坏。
      */
     Boot_FlagSetDefault(&boot_flag_info);
 
-     /*
-     * 将默认内容写入Flash。
-     * Boot_FlagWrite内部会计算CRC并擦除Sector 4。
+    /*
+     * 当前没有任何有效副本。
+     * 保持current_addr为0，Boot_FlagWrite()会把第一份Flag写入COPY0。
      */
+    boot_flag_current_addr = 0U;
+
     status = Boot_FlagWrite(&boot_flag_info);
 
-    if (status != HAL_OK)
-    {
-        return status;
-    }
-    
-    /*
-     * 重新从Flash读取，而不是直接相信刚才的RAM数据。
-     */
+    if (status != HAL_OK){  return status;  }
+
+    /*从真正写入的COPY0重新读取。*/
     Boot_FlagRead(&boot_flag_info);
 
-    /*
-     * 检查真正写入Flash的内容。
-     */
-    if (Boot_FlagInfoValid(&boot_flag_info) == 0U)
-    {
-        return HAL_ERROR;
-    }
+    /*不相信RAM原值，检查Flash中的真实内容。*/
+    if (Boot_FlagInfoValid(&boot_flag_info) == 0U){ return HAL_ERROR;   }
 
     return HAL_OK;
 }
 
-const Boot_FlagInfoTypeDef* Boot_FlagGetInfo(void)
+const Boot_FlagInfoTypeDef *Boot_FlagGetInfo(void)
 {
 
     return &boot_flag_info;
 }
 
-HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot,uint32_t image_size,uint16_t image_crc)
+HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot, uint32_t image_size, uint16_t image_crc)
 {
     HAL_StatusTypeDef status;
     Boot_ImageInfoTypeDef *image_info;
@@ -323,11 +420,11 @@ HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot,uint32_t image_
         return HAL_ERROR;
     }
 
-    if(slot == BOOT_SLOT_A)
+    if (slot == BOOT_SLOT_A)
     {
         image_info = &boot_flag_info.app_a;
     }
-    else if(slot == BOOT_SLOT_B)
+    else if (slot == BOOT_SLOT_B)
     {
         image_info = &boot_flag_info.app_b;
     }
@@ -355,7 +452,7 @@ HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot,uint32_t image_
     /*表示已经存在完整固件，等待搬运。*/
     boot_flag_info.install_state = BOOT_INSTALL_PENDING;
 
-     /*
+    /*
      * Boot_FlagWrite会：
      * 1. 更新整个标志结构CRC；
      * 2. 擦除Sector 4；
@@ -376,11 +473,11 @@ HAL_StatusTypeDef Boot_FlagInvalidateImage(Boot_SlotTypeDef slot)
     HAL_StatusTypeDef status;
     Boot_ImageInfoTypeDef *image_info;
 
-    if(slot == BOOT_SLOT_A)
+    if (slot == BOOT_SLOT_A)
     {
         image_info = &boot_flag_info.app_a;
     }
-    else if(slot == BOOT_SLOT_B)
+    else if (slot == BOOT_SLOT_B)
     {
         image_info = &boot_flag_info.app_b;
     }

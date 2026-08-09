@@ -3,6 +3,7 @@
 #include "boot_crc.h"
 #include <string.h>
 #include "boot_flag.h"
+#include "boot_confirm.h"
 
 #define BOOT_COPY_BUFFER_SIZE 256U /*复制缓冲区大小*/
 
@@ -49,11 +50,22 @@ static uint32_t protocol_expected_sequence = 0U;
 /*协议接收过程发生长度错误标志。*/
 static volatile uint8_t protocol_rx_error_pending = 0U;
 
+/*为候选APP准备一次新的试运行。*/
+static HAL_StatusTypeDef Boot_PrepareTrialStart(void);
+
+/*检查并准备候选APP的第一次试运行。*/
+static HAL_StatusTypeDef Boot_ProcessTrialReady(void);
+
+/*处理候选APP已经确认成功的情况。*/
+static HAL_StatusTypeDef Boot_ProcessTrialConfirmed(void);
+
+/*回滚：将active_slot中的最后可靠APP恢复到Run区。*/
+static HAL_StatusTypeDef Boot_ProcessRollback(void);
+
 typedef void (*app_func_t)(void);
 
 void bootloader_init(void)
 {
-
     /*初始化帧接收器*/
     Boot_RxInit(&protocol_rx_context);
 
@@ -81,6 +93,9 @@ void bootloader_init(void)
     __HAL_UART_CLEAR_OREFLAG(&huart1);
 
     HAL_UARTEx_ReceiveToIdle_IT(&huart1, uart_rec_buff, BOOT_FRAME_MAX_SIZE);
+
+    /*打开RTC Backup Register访问能力*/
+    Boot_ConfirmInit();
 
     if (Boot_FlagInit() == HAL_OK)
     {
@@ -1463,10 +1478,7 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
     uint16_t expected_crc;
     uint16_t calculated_crc;
 
-    /*
-     * 获取Boot_FlagInit()已经读取到RAM中的
-     * 当前Flag信息。
-     */
+    /*获取Boot_FlagInit()已经读取到RAM中的，当前Flag信息。*/
     flag_info = Boot_FlagGetInfo();
 
     if (flag_info == NULL)
@@ -1474,19 +1486,14 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
         return HAL_ERROR;
     }
 
-    /*
-     * 只有PENDING或者INSTALLING状态
-     * 才表示存在需要执行或重新执行的安装任务。
-     */
+    /*只有PENDING或者INSTALLING状态，才表示存在需要执行或重新执行的安装任务。*/
     if ((flag_info->install_state != BOOT_INSTALL_PENDING) &&
         (flag_info->install_state != BOOT_INSTALLING))
     {
         return HAL_ERROR;
     }
 
-    /*
-     * 根据pending_slot选择源固件。
-     */
+    /*根据pending_slot选择源固件。*/
     if (flag_info->pending_slot == BOOT_SLOT_A)
     {
         source_addr = APP_A_ADDR;
@@ -1502,19 +1509,14 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
         return HAL_ERROR;
     }
 
-    /*
-     * 待安装固件必须已经通过END校验。
-     */
+    /*待安装固件必须已经通过END校验。*/
     if ((image_info->valid_mark != BOOT_IMAGE_VALID_MARK) ||
         (image_info->image_size == 0U))
     {
         return HAL_ERROR;
     }
 
-    /*
-     * 在修改Flag状态之前，
-     * 先保存本次安装需要使用的大小和CRC。
-     */
+    /*在修改Flag状态之前，先保存本次安装需要使用的大小和CRC。*/
     image_size = image_info->image_size;
     expected_crc = image_info->image_crc;
 
@@ -1583,9 +1585,6 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
      * 1. A/B固件有效；
      * 2. 搬运函数执行成功；
      * 3. 运行区整个APP的CRC正确。
-     *
-     * 现在才允许更新active_slot，
-     * 并将安装状态改为IDLE。
      */
     status = Boot_FlagFinishInstall();
 
@@ -1600,7 +1599,7 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
     return HAL_OK;
 }
 
-uint8_t Boot_RunImageValid(void)
+uint8_t Boot_RunImageValidForSlot(Boot_SlotTypeDef source_slot)
 {
     const Boot_FlagInfoTypeDef *flag_info;
     const Boot_ImageInfoTypeDef *image_info;
@@ -1619,25 +1618,19 @@ uint8_t Boot_RunImageValid(void)
     }
 
     /*
-     * 根据active_slot找到运行区对应的源固件信息。
-     *
-     * active=A：
-     * 运行区应该与app_a记录一致。
-     *
-     * active=B：
-     * 运行区应该与app_b记录一致。
-     */
-    if (flag_info->active_slot == BOOT_SLOT_A)
+    * 根据调用者指定的source_slot，找到Run区应该对应的源固件信息。
+    */
+    if (source_slot == BOOT_SLOT_A)
     {
         image_info = &flag_info->app_a;
     }
-    else if (flag_info->active_slot == BOOT_SLOT_B)
+    else if (source_slot == BOOT_SLOT_B)
     {
         image_info = &flag_info->app_b;
     }
     else
     {
-        printf("RUN_ACTIVE_SLOT_ERROR\r\n");
+        printf("RUN_SOURCE_SLOT_ERROR\r\n");
         return 0U;
     }
 
@@ -1662,20 +1655,16 @@ uint8_t Boot_RunImageValid(void)
         return 0U;
     }
 
-    printf("RUN_SOURCE:%lu\r\n", (unsigned long)flag_info->active_slot);
+    printf("RUN_SOURCE:%lu\r\n", (unsigned long)source_slot);
     printf("RUN_SIZE:%lu\r\n", (unsigned long)image_info->image_size);
     printf("RUN_EXPECTED_CRC:0x%04X\r\n", (unsigned int)image_info->image_crc);
 
-    /*
-     * 根据运行区真实内容计算整个APP的CRC。
-     */
+    /*根据运行区真实内容计算整个APP的CRC。*/
     calculated_crc = Boot_CRC16_Modbus((const uint8_t *)APP_RUN_ADDR, image_info->image_size);
 
     printf("RUN_CALCULATED_CRC:0x%04X\r\n", (unsigned int)calculated_crc);
 
-    /*
-     * 运行区CRC必须与active槽位保存的CRC一致。
-     */
+    /*运行区CRC必须与source_slot指定的槽位保存的CRC一致*/
     if (calculated_crc != image_info->image_crc)
     {
         printf("RUN_IMAGE_CRC_ERROR\r\n");
@@ -1686,14 +1675,29 @@ uint8_t Boot_RunImageValid(void)
     return 1U;
 }
 
+uint8_t Boot_RunImageValid(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+
+    /*
+     * 正常启动时，Run区必须与最后确认可靠的active_slot一致。
+     */
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return 0U;
+    }
+
+    return Boot_RunImageValidForSlot(flag_info->active_slot);
+}
+
 uint8_t Boot_PrepareRunImage(void)
 {
     const Boot_FlagInfoTypeDef *flag_info;
     HAL_StatusTypeDef status;
 
-    /*
-     * 获取当前Flag状态。
-     */
+    /*获取当前Flag状态。*/
     flag_info = Boot_FlagGetInfo();
 
     if (flag_info == NULL)
@@ -1707,14 +1711,11 @@ uint8_t Boot_PrepareRunImage(void)
     printf("BOOT_INSTALL_STATE:%lu\r\n", (unsigned long)flag_info->install_state);
 
     /*
-     * PENDING：
-     * 存在一份尚未安装的新固件。
-     *
-     * INSTALLING：
-     * 上一次安装可能被复位打断。
-     *
-     * 两种状态都需要执行或重新执行搬运。
-     */
+    * PENDING表示存在等待安装的新固件；
+    * INSTALLING表示上次搬运可能被复位打断。
+    *
+    * 两种状态都执行或者重新执行安装。
+    */
     if ((flag_info->install_state == BOOT_INSTALL_PENDING) ||
         (flag_info->install_state == BOOT_INSTALLING))
     {
@@ -1732,21 +1733,193 @@ uint8_t Boot_PrepareRunImage(void)
     }
 
     /*
-     * IDLE表示没有待安装任务，
-     * 可以检查当前运行区。
-     */
-    else if (flag_info->install_state == BOOT_INSTALL_IDLE)
+    * Boot_InstallPendingImage()可能已经把状态从
+    * PENDING/INSTALLING修改成TRIAL_READY。
+    *
+    * 因此重新获取最新Flag状态。
+    */
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
     {
-        printf("BOOT_NO_PENDING_IMAGE\r\n");
+        printf("BOOT_FLAG_POINTER_ERROR\r\n");
+        return 0U;
     }
 
     /*
-     * ERROR或者其他非法状态下，
-     * 不允许直接运行APP。
-     */
+    * 候选APP已经复制到Run区并通过CRC，
+    * 准备给予它第一次试运行机会。
+    */
+    if (flag_info->install_state == BOOT_INSTALL_TRIAL_READY)
+    {
+        printf("BOOT_TRIAL_READY\r\n");
+
+        /*将状态切换成运行态*/
+        status = Boot_ProcessTrialReady();
+
+        if (status != HAL_OK)
+        {
+            printf("BOOT_TRIAL_PREPARE_FAILED\r\n");
+            return 0U;
+        }
+
+        printf("BOOT_TRIAL_PREPARE_OK\r\n");
+
+        /*
+        * 必须提前返回。
+        *
+        * 外层Bootloader_Process()收到1以后，
+        * 会调用Boot_JumpToApp()跳转到Run区候选APP。
+        */
+        return 1U;
+    }
+
+    /*候选APP已经获得过一次试运行机会。*/
+    if (flag_info->install_state == BOOT_INSTALL_TRIAL_RUNNING)
+    {
+        /*APP已经留下确认口令：正式确认候选版本*/
+        if (Boot_ConfirmIsConfirmed() != 0U)
+        {
+            printf("BOOT_TRIAL_CONFIRM_REQUIRED\r\n");
+
+            status = Boot_ProcessTrialConfirmed();
+
+            if (status != HAL_OK)
+            {
+                printf("BOOT_TRIAL_CONFIRM_FAILED\r\n");
+                return 0U;
+            }
+
+            printf("BOOT_TRIAL_CONFIRM_OK\r\n");
+
+            /*
+            * 确认成功后，状态已经变成IDLE，
+            * active_slot也已经变成刚刚确认的新版本。
+            */
+            flag_info = Boot_FlagGetInfo();
+
+            if (flag_info == NULL)
+            {
+                return 0U;
+            }
+        }
+        else
+        {
+            printf("BOOT_TRIAL_NOT_CONFIRMED\r\n");
+
+            /*第一次安装时没有active_slot，候选APP失败后不存在可回滚的旧版本*/
+            if (flag_info->active_slot == BOOT_SLOT_NONE)
+            {
+                printf("BOOT_TRIAL_NO_ROLLBACK_IMAGE\r\n");
+
+                status = Boot_FlagAbortTrial();
+
+                if (status != HAL_OK)
+                {
+                    printf("BOOT_TRIAL_ABORT_FAILED\r\n");
+                    return 0U;
+                }
+
+                printf("BOOT_TRIAL_ABORT_OK\r\n");
+
+                /*当前没有可运行APP，留在Bootloader等待Qt重新升级。*/
+                return 0U;
+            }
+
+            status = Boot_ProcessRollback();
+
+            if (status != HAL_OK)
+            {
+                printf("BOOT_ROLLBACK_FAILED\r\n");
+                return 0U;
+            }
+
+            printf("BOOT_ROLLBACK_OK\r\n");
+
+            /*
+            * 回滚成功后：
+            *
+            * active_slot保持旧版本；
+            * pending_slot已经清除；
+            * install_state已经回到IDLE。
+            */
+            flag_info = Boot_FlagGetInfo();
+
+            if (flag_info == NULL)
+            {
+                return 0U;
+            }
+        }
+    }
+
+   /*
+    * 上电时直接发现ROLLBACK，
+    * 说明上一次恢复旧版本的过程可能被断电打断。
+    *
+    * 重新执行完整回滚。
+    */
+    if (flag_info->install_state == BOOT_INSTALL_ROLLBACK)
+    {
+        printf("BOOT_ROLLBACK_RETRY_REQUIRED\r\n");
+
+        status = Boot_ProcessRollback();
+
+        if (status != HAL_OK)
+        {
+            printf("BOOT_ROLLBACK_RETRY_FAILED\r\n");
+            return 0U;
+        }
+
+        printf("BOOT_ROLLBACK_RETRY_OK\r\n");
+
+        /*
+        * 回滚成功后重新获取最新Flag，
+        * 此时应该已经回到IDLE。
+        */
+        flag_info = Boot_FlagGetInfo();
+
+        if (flag_info == NULL)
+        {
+            return 0U;
+        }
+    }
+
+    /*
+    * IDLE表示没有升级、试运行或者回滚任务，
+    * Run区应该对应active_slot正式版本。
+    */
+    if (flag_info->install_state == BOOT_INSTALL_IDLE)
+    {
+        printf("BOOT_NO_PENDING_IMAGE\r\n");
+
+        /*
+        * IDLE状态下不应该存在任何试运行握手信息。
+        * 清理确认或回滚过程中可能遗留的Backup Register。
+        */
+        if (Boot_ConfirmIsEmpty() == 0U)
+        {
+            printf("BOOT_CONFIRM_STALE_CLEAR\r\n");
+
+            Boot_ConfirmClear();
+
+            if (Boot_ConfirmIsEmpty() == 0U)
+            {
+                printf("BOOT_CONFIRM_STALE_CLEAR_ERROR\r\n");
+                return 0U;
+            }
+
+            printf("BOOT_CONFIRM_STALE_CLEAR_OK\r\n");
+        }
+    }
     else
     {
-        printf("BOOT_INSTALL_STATE_ERROR\r\n");
+        /*
+        * TRIAL_RUNNING和ROLLBACK将在后面接入。
+        * 当前阶段先禁止继续运行，避免错误跳转。
+        */
+        printf("BOOT_INSTALL_STATE_ERROR:%lu\r\n",
+            (unsigned long)flag_info->install_state);
+
         return 0U;
     }
 
@@ -1764,4 +1937,343 @@ uint8_t Boot_PrepareRunImage(void)
     printf("BOOT_RUN_IMAGE_READY\r\n");
 
     return 1U;
+}
+
+/*为候选APP准备一次新的试运行。*/
+static HAL_StatusTypeDef Boot_PrepareTrialStart(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    HAL_StatusTypeDef status;
+
+    /*获取Boot_FlagInit()已经选出的最新有效Flag*/
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    /*只有已经完成搬运和CRC检查的新APP，才允许准备试运行。*/
+    if (flag_info->install_state != BOOT_INSTALL_TRIAL_READY)
+    {
+        return HAL_ERROR;
+    }
+
+    /*pending_slot必须指向本次候选APP。*/
+    if ((flag_info->pending_slot != BOOT_SLOT_A) &&
+        (flag_info->pending_slot != BOOT_SLOT_B))
+    {
+        return HAL_ERROR;
+    }
+
+    /*必须先清楚上一次可能遗留的命令*/
+    Boot_ConfirmClear();
+
+    if(Boot_ConfirmIsEmpty() == 0U)
+    {
+        printf("TRIAL_CONFIRM_CLEAR_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    /*通知即将运行的候选APP：本次启动属于试运行，需要完成确认。*/
+    Boot_ConfirmSetTrialRequest();
+    if(Boot_ConfirmIsTrialRequested() == 0)
+    {
+        printf("TRIAL_REQUEST_WRITE_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    /*将TRIAL_RUNNING可靠写入双Flag。*/
+    status = Boot_FlagBeginTrial();
+
+    if (status != HAL_OK)
+    {
+        printf("TRIAL_BEGIN_ERROR\r\n");
+        return status;
+    }
+
+    printf("TRIAL_BEGIN_OK\r\n");
+
+    return HAL_OK;
+}
+
+static HAL_StatusTypeDef Boot_ProcessTrialReady(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    Boot_SlotTypeDef trial_slot;
+    HAL_StatusTypeDef status;
+
+    /*获取双Flag中最新的有效状态。*/
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    /*只有TRIAL_READY状态才表示：候选APP已经复制到Run区，但还没有开始试运行。*/
+    if (flag_info->install_state != BOOT_INSTALL_TRIAL_READY)
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 保存候选槽位。
+     *
+     * 当前active_slot仍然是旧版本，
+     * pending_slot才是Run区中的候选新版本。
+     */
+    trial_slot = flag_info->pending_slot;
+
+    if ((trial_slot != BOOT_SLOT_A) &&
+        (trial_slot != BOOT_SLOT_B))
+    {
+        printf("TRIAL_SLOT_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    printf("TRIAL_SOURCE:%lu\r\n",(unsigned long)trial_slot);
+
+    /*使用pending_slot记录的大小和CRC检查Run区。*/
+    if (Boot_RunImageValidForSlot(trial_slot) == 0U)
+    {
+        printf("TRIAL_RUN_IMAGE_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+     /*清除旧确认口令，并把Flag从TRIAL_READY推进到TRIAL_RUNNING。*/
+    status = Boot_PrepareTrialStart();
+
+    if (status != HAL_OK)
+    {
+        printf("TRIAL_PREPARE_ERROR\r\n");
+        return status;
+    }
+    printf("TRIAL_RUN_READY\r\n");
+    return HAL_OK;
+}
+
+static HAL_StatusTypeDef Boot_ProcessTrialConfirmed(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    Boot_SlotTypeDef trial_slot;
+    HAL_StatusTypeDef status;
+
+    /*获取当前最新Flag。*/
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    /*只有正在试运行时，APP确认口令才有意义。*/
+    if (flag_info->install_state != BOOT_INSTALL_TRIAL_RUNNING)
+    {
+        return HAL_ERROR;
+    }
+
+    /*pending_slot保存当前试运行的候选版本。*/
+    trial_slot = flag_info->pending_slot;
+
+    if ((trial_slot != BOOT_SLOT_A) &&
+        (trial_slot != BOOT_SLOT_B))
+    {
+        printf("TRIAL_CONFIRM_SLOT_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    /*调用这个函数以前应该已经检测到确认口令，这里再检查一次，防止错误调用。*/
+    if (Boot_ConfirmIsConfirmed() == 0U)
+    {
+        printf("TRIAL_CONFIRM_NOT_FOUND\r\n");
+        return HAL_ERROR;
+    }
+
+    printf("TRIAL_CONFIRM_FOUND\r\n");
+
+    /* APP虽然留下了确认口令，仍然要检查Run区内容与pending_slot一致*/
+    if (Boot_RunImageValidForSlot(trial_slot) == 0U)
+    {
+        printf("TRIAL_CONFIRM_RUN_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    /*
+     * 正式确认为运行版本：
+     *
+     * active_slot = pending_slot
+     * pending_slot = NONE
+     * install_state = IDLE
+     */
+    status = Boot_FlagConfirmTrial();
+
+    if (status != HAL_OK)
+    {
+        /*
+         * Flag提交失败时不能清除确认口令，
+         * 这样下次启动还可以重新确认。
+         */
+        printf("TRIAL_CONFIRM_FLAG_ERROR\r\n");
+        return status;
+    }
+
+    /*
+     * Flag已经可靠提交成功，
+     * 现在才清除Backup Register中的确认口令。
+     */
+    Boot_ConfirmClear();
+    if (Boot_ConfirmIsEmpty() == 0U)
+    {
+        printf("TRIAL_CONFIRM_CLEAR_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    printf("TRIAL_CONFIRM_OK\r\n");
+
+    return HAL_OK;
+}
+
+static HAL_StatusTypeDef Boot_ProcessRollback(void)
+{
+    const Boot_FlagInfoTypeDef *flag_info;
+    const Boot_ImageInfoTypeDef *active_image;
+
+    Boot_SlotTypeDef active_slot;
+
+    uint32_t source_addr;
+    uint32_t image_size;
+
+    HAL_StatusTypeDef status;
+
+    /*
+     * 获取当前最新Flag。
+     */
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    /*第一次发现候选APP没有确认，状态修改为回滚。*/
+    if (flag_info->install_state == BOOT_INSTALL_TRIAL_RUNNING)
+    {
+        status = Boot_FlagBeginRollback();
+
+        if (status != HAL_OK)
+        {
+            printf("ROLLBACK_BEGIN_ERROR\r\n");
+            return status;
+        }
+
+        printf("ROLLBACK_BEGIN_OK\r\n");
+    }
+
+    /*已经是ROLLBACK：说明上一次恢复可能被断电打断，重新执行。*/
+    else if (flag_info->install_state == BOOT_INSTALL_ROLLBACK)
+    {
+        printf("ROLLBACK_RETRY\r\n");
+    }
+    else
+    {
+        printf("ROLLBACK_STATE_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    /*Boot_FlagBeginRollback()可能已经写入新Flag副本，重新获取最新状态。*/
+    flag_info = Boot_FlagGetInfo();
+
+    if (flag_info == NULL)
+    {
+        return HAL_ERROR;
+    }
+
+    active_slot = flag_info->active_slot;
+
+    /*根据active_slot获取对应的固件信息*/
+    if (active_slot == BOOT_SLOT_A)
+    {
+        source_addr = APP_A_ADDR;
+        active_image = &flag_info->app_a;
+    }
+    else if (active_slot == BOOT_SLOT_B)
+    {
+        source_addr = APP_B_ADDR;
+        active_image = &flag_info->app_b;
+    }
+    else
+    {
+        printf("ROLLBACK_NO_ACTIVE_IMAGE\r\n");
+        return HAL_ERROR;
+    }
+
+    /*旧版本必须仍然具有合法的固件信息。*/
+    if ((active_image->valid_mark != BOOT_IMAGE_VALID_MARK) ||
+        (active_image->image_size == 0U))
+    {
+        printf("ROLLBACK_ACTIVE_IMAGE_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    image_size = active_image->image_size;
+
+    printf("ROLLBACK_SOURCE:%lu\r\n",(unsigned long)active_slot);
+    printf("ROLLBACK_SIZE:%lu\r\n",(unsigned long)image_size);
+    printf("ROLLBACK_EXPECTED_CRC:0x%04X\r\n",(unsigned int)active_image->image_crc);
+
+    /*擦除Run区并复制最后确认可靠的旧版本。*/
+    status = Boot_CopyToRun(source_addr, image_size);
+
+    if (status != HAL_OK)
+    {
+        printf("ROLLBACK_COPY_ERROR\r\n");
+        return status;
+    }
+
+    printf("ROLLBACK_COPY_OK\r\n");
+
+    /*
+     * 使用active_slot记录的大小和CRC，
+     * 检查Run区中的恢复结果。
+     */
+    if (Boot_RunImageValidForSlot(active_slot) == 0U)
+    {
+        printf("ROLLBACK_RUN_IMAGE_ERROR\r\n");
+        return HAL_ERROR;
+    }
+
+    printf("ROLLBACK_RUN_IMAGE_OK\r\n");
+
+     /*
+     * 回滚成功：
+     *
+     * active_slot保持旧版本；
+     * pending_slot被清除；
+     * 失败候选固件被标记无效；
+     * 状态返回IDLE。
+     */
+    status = Boot_FlagFinishRollback();
+
+    if (status != HAL_OK)
+    {
+        printf("ROLLBACK_FINISH_ERROR\r\n");
+        return status;
+    }
+
+    printf("ROLLBACK_FINISH_OK\r\n");
+
+    /*
+    * 回滚已经成功，旧的TRIAL_REQUEST不再有效。
+    * 必须清除，否则恢复后的旧APP会误认为自己正在试运行。
+    */
+    Boot_ConfirmClear();
+
+    if (Boot_ConfirmIsEmpty() == 0U)
+    {
+        printf("ROLLBACK_CONFIRM_CLEAR_ERROR\r\n");
+        return HAL_ERROR;
+    }
+    return HAL_OK;
+
 }

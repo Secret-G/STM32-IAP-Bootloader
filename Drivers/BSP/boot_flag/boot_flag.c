@@ -594,9 +594,7 @@ HAL_StatusTypeDef Boot_FlagFinishInstall(void)
         return HAL_ERROR;
     }
 
-    /*
-     * pending_slot必须是合法的A或B。
-     */
+    /*pending_slot必须是合法的A或B。*/
     if ((boot_flag_info.pending_slot != BOOT_SLOT_A) &&
         (boot_flag_info.pending_slot != BOOT_SLOT_B))
     {
@@ -604,15 +602,15 @@ HAL_StatusTypeDef Boot_FlagFinishInstall(void)
     }
 
     /*
-     * 运行区现在来自pending_slot。
-     * 例如pending_slot为B，
-     * 搬运成功后active_slot就变成B。
-     */
-    boot_flag_info.active_slot = boot_flag_info.pending_slot;
-
-    /*待安装任务已经完成。*/
-    boot_flag_info.pending_slot = BOOT_SLOT_NONE;
-    boot_flag_info.install_state = BOOT_INSTALL_IDLE;
+    * 新固件虽然已经复制到运行区并通过CRC，
+    * 但还没有真正运行和完成自检。2
+    *
+    * 因此：
+    * 1. active_slot继续保存最后确认可靠的旧版本；
+    * 2. pending_slot继续保存本次候选新版本；
+    * 3. 状态进入TRIAL_READY，等待第一次试运行。
+    */
+    boot_flag_info.install_state = BOOT_INSTALL_TRIAL_READY;
 
     /*将最终状态保存到Flash。*/
     status = Boot_FlagWrite(&boot_flag_info);
@@ -637,6 +635,246 @@ HAL_StatusTypeDef Boot_FlagSetInstallError(void)
      * 方便后续判断是哪一个槽位安装失败。
      */
     boot_flag_info.install_state = BOOT_INSTALL_ERROR;
+
+    status = Boot_FlagWrite(&boot_flag_info);
+
+    if (status != HAL_OK)
+    {
+        Boot_FlagRead(&boot_flag_info);
+        return status;
+    }
+
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef Boot_FlagBeginTrial(void)
+{
+    HAL_StatusTypeDef status;
+
+    /*只有已经复制并校验完成的新APP，才能进入试运行状态。*/
+    if (boot_flag_info.install_state != BOOT_INSTALL_TRIAL_READY)
+    {
+        return HAL_ERROR;
+    }
+
+    /*pending_slot保存正在试运行的新版本来源，必须是合法的A区或者B区。*/
+    if ((boot_flag_info.pending_slot != BOOT_SLOT_A) &&
+        (boot_flag_info.pending_slot != BOOT_SLOT_B))
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 在跳转新APP之前，先持久化“已经开始试运行”状态。
+     *
+     * active_slot仍然保持旧版本；
+     * pending_slot仍然保持候选新版本。
+     */
+    boot_flag_info.install_state = BOOT_INSTALL_TRIAL_RUNNING;
+
+    status = Boot_FlagWrite(&boot_flag_info);
+
+    if (status != HAL_OK)
+    {
+        /*
+         * 提交失败时，重新读取Flash中最后一份有效Flag，
+         * 避免RAM状态与Flash状态不一致。
+         */
+        Boot_FlagRead(&boot_flag_info);
+        return status;
+    }
+
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef Boot_FlagConfirmTrial(void)
+{
+    HAL_StatusTypeDef status;
+
+    /*只有正在试运行的候选APP，*/
+    if (boot_flag_info.install_state != BOOT_INSTALL_TRIAL_RUNNING){    return HAL_ERROR;   }
+
+    /*pending_slot必须指向本次试运行的候选版本。*/
+    if ((boot_flag_info.pending_slot != BOOT_SLOT_A) &&
+        (boot_flag_info.pending_slot != BOOT_SLOT_B)){  return HAL_ERROR;   }
+
+    /*
+     * 候选APP已经通过试运行：
+     *
+     * 1. 将候选槽位升级为正式活动槽位；
+     * 2. 清除待处理槽位；
+     * 3. 回到空闲状态。
+     */
+    boot_flag_info.active_slot = boot_flag_info.pending_slot;
+    boot_flag_info.pending_slot = BOOT_SLOT_NONE;
+    boot_flag_info.install_state = BOOT_INSTALL_IDLE;
+
+    /*将最终确认结果持久化到双Flag副本。*/
+    status = Boot_FlagWrite(&boot_flag_info);
+
+    if (status != HAL_OK)
+    {
+        /*写入失败时恢复Flash中的最后有效状态。*/
+        Boot_FlagRead(&boot_flag_info);
+        return status;
+    }
+
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef Boot_FlagBeginRollback(void)
+{
+    HAL_StatusTypeDef status;
+
+    /*只有已经开始试运行、但没有得到确认的APP，才能进入回滚流程。*/
+    if (boot_flag_info.install_state != BOOT_INSTALL_TRIAL_RUNNING)
+    {
+        return HAL_ERROR;
+    }
+
+    /*active_slot保存最后确认可靠的旧版本，回滚时必须能够从A区或B区恢复它。*/
+    if ((boot_flag_info.active_slot != BOOT_SLOT_A) &&
+        (boot_flag_info.active_slot != BOOT_SLOT_B))
+    {
+        return HAL_ERROR;
+    }
+
+    /*pending_slot保存本次试运行失败的候选版本。*/
+    if ((boot_flag_info.pending_slot != BOOT_SLOT_A) &&
+        (boot_flag_info.pending_slot != BOOT_SLOT_B))
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+    * 旧的可靠版本和失败候选版本不能是同一个槽位。
+    *
+    * 否则回滚完成时清除pending固件信息，
+    * 可能同时把active固件标记为无效。
+    */
+    if (boot_flag_info.active_slot == boot_flag_info.pending_slot)
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 在擦除Run区之前，先将回滚状态写入Flash。
+     * 如果恢复过程中断电，下次启动还能继续回滚。
+     */
+    boot_flag_info.install_state = BOOT_INSTALL_ROLLBACK;
+
+    status = Boot_FlagWrite(&boot_flag_info);
+
+    if (status != HAL_OK)
+    {
+        Boot_FlagRead(&boot_flag_info);
+        return status;
+    }
+
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef Boot_FlagFinishRollback(void)
+{
+    HAL_StatusTypeDef status;
+    Boot_ImageInfoTypeDef *failed_image;
+
+    /*只有正在回滚时，才允许宣布回滚完成。*/
+    if (boot_flag_info.install_state != BOOT_INSTALL_ROLLBACK)
+    {
+        return HAL_ERROR;
+    }
+
+    /*active_slot必须仍然指向最后确认可靠的旧版本。*/
+    if ((boot_flag_info.active_slot != BOOT_SLOT_A) &&
+        (boot_flag_info.active_slot != BOOT_SLOT_B))
+    {
+        return HAL_ERROR;
+    }
+
+    /*找到本次试运行失败的候选槽位信息。*/
+    if (boot_flag_info.pending_slot == BOOT_SLOT_A)
+    {
+        failed_image = &boot_flag_info.app_a;
+    }
+    else if (boot_flag_info.pending_slot == BOOT_SLOT_B)
+    {
+        failed_image = &boot_flag_info.app_b;
+    }
+    else
+    {
+        return HAL_ERROR;
+    }
+
+     /*
+     * 失败候选固件不再允许参与后续启动。
+     *
+     * Flash中的BIN数据可以暂时保留，
+     * 这里只清除Flag中的有效信息。
+     */
+    failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
+    failed_image->image_size = 0U;
+    failed_image->image_crc = 0U;
+
+    /*active_slot保持不变，因为它本来就是旧的可靠版本。*/
+    boot_flag_info.pending_slot = BOOT_SLOT_NONE;
+    boot_flag_info.install_state = BOOT_INSTALL_IDLE;
+
+    status = Boot_FlagWrite(&boot_flag_info);
+
+    if (status != HAL_OK)
+    {
+        Boot_FlagRead(&boot_flag_info);
+        return status;
+    }
+
+    return HAL_OK;
+
+}
+
+HAL_StatusTypeDef Boot_FlagAbortTrial(void)
+{
+    HAL_StatusTypeDef status;
+    Boot_ImageInfoTypeDef *failed_image;
+
+    /*
+     * 只有正在试运行时才能放弃候选APP。
+     */
+    if (boot_flag_info.install_state != BOOT_INSTALL_TRIAL_RUNNING)
+    {
+        return HAL_ERROR;
+    }
+
+    /*只处理首次安装失败*/
+    if(boot_flag_info.active_slot != BOOT_SLOT_NONE)
+    {
+        return HAL_ERROR;
+    }
+
+    /*
+     * 找到本次失败的候选固件。
+     */
+    if (boot_flag_info.pending_slot == BOOT_SLOT_A)
+    {
+        failed_image = &boot_flag_info.app_a;
+    }
+    else if (boot_flag_info.pending_slot == BOOT_SLOT_B)
+    {
+        failed_image = &boot_flag_info.app_b;
+    }
+    else
+    {
+        return HAL_ERROR;
+    }
+
+    /*将固件标记为无效*/
+    failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
+    failed_image->image_size = 0U;
+    failed_image->image_crc = 0U;
+
+    /*清除待处理槽位*/
+    boot_flag_info.pending_slot = BOOT_SLOT_NONE;
+    boot_flag_info.install_state = BOOT_INSTALL_IDLE;
 
     status = Boot_FlagWrite(&boot_flag_info);
 

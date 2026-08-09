@@ -25,6 +25,7 @@ Listings/
 
 *.uvguix.*
 *.uvprojx.user
+*.uvoptx
 
 
 # =========================

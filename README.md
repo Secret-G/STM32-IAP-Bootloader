@@ -1,6 +1,4 @@
 
-
-```markdown
 # STM32F407 可靠固件升级系统
 
 > Bootloader + A/B Slot + Run运行区 + Trial/Confirm + 自动Rollback + Qt6升级工具

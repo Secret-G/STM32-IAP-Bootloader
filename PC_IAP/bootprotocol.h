@@ -3,6 +3,8 @@
 
 #include <QByteArray>
 #include <QtGlobal>
+#include <QString>
+#include <QStringList>
 
 /*
  * Bootloader协议算法类。
@@ -62,7 +64,10 @@ public:
         ResultPacketCountError = 0x0007,
         ResultImageSizeError   = 0x0008,
         ResultImageCrcError    = 0x0009,
-        ResultUnknownCommand   = 0x000A
+        ResultUnknownCommand   = 0x000A,
+
+        /*请求安装的固件版本不符合升级策略*/
+        BOOT_RESULT_VERSION_ERROR = 0x000BU
     };
 
     /*一张ACK/NACK解析后的结果。*/
@@ -85,7 +90,7 @@ public:
     static QByteArray buildFrame( quint16 command,const QByteArray &data,quint32 reserveValue);
 
     /* 构造START升级帧。*/
-    static QByteArray buildStartFrame(quint32 imageSize,quint16 imageCrc);
+    static QByteArray buildStartFrame(quint32 imageSize,quint16 imageCrc,quint32 imageVersion);
 
     /* 构造一张DATA固件数据帧。*/
     static QByteArray buildDataFrame(const QByteArray &packetData,quint32 sequence);
@@ -95,6 +100,11 @@ public:
 
     /*解析一张固定14字节的ACK/NACK。*/
     static bool parseResponse(const QByteArray &frame, ResponseInfo &response);
+
+    /*将“1.2.3.4”转换为0x01020304*/
+    static bool parseVersion(const QString &versionText,quint32 &versionValue);
+    /*将0x01020304转换成“1.2.3.4”*/
+    static QString formatVersion(quint32 versionValue);
 
 private:
 

@@ -92,7 +92,7 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
     return frame;
 }
 
-QByteArray BootProtocol::buildStartFrame(quint32 imageSize, quint16 imageCrc)
+QByteArray BootProtocol::buildStartFrame(quint32 imageSize, quint16 imageCrc,quint32 imageVersion)
 {
 
 
@@ -119,7 +119,7 @@ QByteArray BootProtocol::buildStartFrame(quint32 imageSize, quint16 imageCrc)
      * START帧暂时不使用RESERVE，
      * 因此传入0。
      */
-    return buildFrame(static_cast<quint16>(CmdStartUpdate), data, 0U);
+    return buildFrame(static_cast<quint16>(CmdStartUpdate), data, imageVersion);
 }
 
 QByteArray BootProtocol::buildDataFrame(const QByteArray &packetData, quint32 sequence)
@@ -220,6 +220,62 @@ bool BootProtocol::parseResponse(const QByteArray &frame, ResponseInfo &response
     response.value = readUint32LE(frame, 8);
 
     return true;
+}
+
+bool BootProtocol::parseVersion(const QString &versionText, quint32 &versionValue)
+{
+    /*
+     * 按小数点切割。
+     * “1.2.3.4”会得到四部分：
+     * “1”“2”“3”“4”。
+     */
+    const QStringList parts = versionText.trimmed().split('.');
+
+    if(parts.size() != 4)
+    {
+        return false;
+    }
+
+    quint32 result = 0U;
+
+    for (int index = 0; index < 4; index++)
+    {
+        bool ok = false;
+
+        const uint partValue = parts.at(index).toUInt(&ok);
+
+        /*
+         * 每一级只占一个字节，
+         * 所以范围只能是0～255。
+         */
+        if ((!ok) || (partValue > 255U))
+        {
+            return false;
+        }
+        const int shift = 24 - index * 8;
+
+        result |= static_cast<quint32>(partValue) << shift;
+    }
+
+    versionValue = result;
+    return true;
+}
+
+QString BootProtocol::formatVersion(quint32 versionValue)
+{
+    const quint32 major = (versionValue >> 24U) & 0xFFU;
+
+    const quint32 minor = (versionValue >> 16U) & 0xFFU;
+
+    const quint32 patch = (versionValue >> 8U) & 0xFFU;
+
+    const quint32 build = versionValue & 0xFFU;
+
+    return QString("%1.%2.%3.%4")
+        .arg(major)
+        .arg(minor)
+        .arg(patch)
+        .arg(build);
 }
 
 void BootProtocol::appendUint16LE(QByteArray &buffer, quint16 value)

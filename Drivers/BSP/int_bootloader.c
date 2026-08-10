@@ -39,7 +39,7 @@ static volatile uint8_t protocol_frame_pending = 0U;
 static Boot_StateTypeDef protocol_update_state = BOOT_IDLE;
 
 /*保存当前START帧提供的升级信息。*/
-static Boot_StartInfoTypeDef protocol_update_info = {UPDATE_NONE, 0U, 0U};
+static Boot_StartInfoTypeDef protocol_update_info = {UPDATE_NONE, 0U, 0U,0U};
 
 /*当前已经成功写入目标区的BIN字节数。*/
 static uint32_t protocol_received_size = 0U;
@@ -77,6 +77,7 @@ void bootloader_init(void)
     protocol_update_info.target = UPDATE_NONE;
     protocol_update_info.image_size = 0U;
     protocol_update_info.image_crc = 0U;
+    protocol_update_info.image_version = 0U;
 
     protocol_received_size = 0U;
     protocol_expected_sequence = 0U;
@@ -474,10 +475,10 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     HAL_StatusTypeDef status;
     uint32_t target_region_size;
     uint32_t run_region_size;
-    /*
-    * 保存START帧最初请求的目标。
-    * AUTO解析后，start_info.target会被替换成实际A/B。
-    */
+
+    uint32_t current_version;
+
+    /*保存START帧最初请求的目标,AUTO解析后，start_info.target会被替换成实际A/B。*/
     Update_TargetTypeDef requested_target;
 
     /*START目标转换成Flag模块使用的槽位*/
@@ -502,19 +503,10 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
     printf("START_FRAME_OK\r\n");
 
-   /*
-    * 保存协议帧中的原始目标。
-    *
-    * Qt以后发送的将是UPDATE_AUTO。
-    */
+    /*保存协议帧中的原始目标，Qt以后发送的将是UPDATE_AUTO。*/
     requested_target = start_info.target;
 
-   /*
-    * 将AUTO转换为实际的A区或者B区。
-    *
-    * 这一步必须发生在重复START判断之前，
-    * 保证AUTO重发时仍然能够得到相同的实际目标。
-    */
+    /*将AUTO转换为实际的A区或者B区。*/
     start_info.target = Boot_SelectUpdateTarget(requested_target);
     if (start_info.target == UPDATE_NONE)
     {
@@ -528,32 +520,16 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
         return;
     }
+
     printf("REQUEST_TARGET:%u\r\n",(unsigned int)requested_target);
     printf("SELECTED_TARGET:%u\r\n",(unsigned int)start_info.target);
     printf("IMAGE_SIZE:%lu\r\n", (unsigned long)start_info.image_size);
     printf("IMAGE_CRC:0x%04X\r\n", (unsigned int)start_info.image_crc);
+    printf("IMAGE_VERSION:0x%08lX\r\n",(unsigned long)start_info.image_version);
 
-    /*
-     * 当前已经处于升级接收状态，
-     * 说明之前已经成功执行过一张START帧。
-     */
+    /*当前已经处于升级接收状态，说明之前已经成功执行过一张START帧。*/
     if (protocol_update_state == BOOT_RECEIVE)
     {
-
-        /*
-         * 判断当前START是否是上一张START的重复发送。
-         *
-         * 必须同时满足：
-         *
-         * 1. 还没有接收任何BIN数据；
-         * 2. 还在等待第0包；
-         * 3. 升级目标相同；
-         * 4. 固件大小相同；
-         * 5. 固件CRC相同。
-         *
-         * 满足这些条件，说明很可能是START ACK丢失，
-         * Qt重新发送了完全相同的START帧。
-         */
         if ((protocol_received_size == 0U) &&
             (protocol_expected_sequence == 0U) &&
             (start_info.target == protocol_update_info.target) &&
@@ -606,11 +582,7 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-
-
-    /*
-     * 根据目标计算A区或者B区容量。
-     */
+    /*根据目标计算A区或者B区容量*/
     if (start_info.target == UPDATE_APP_A)
     {
         target_region_size = APP_A_END_ADDR - APP_A_ADDR + 1U;
@@ -643,14 +615,6 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     {
         printf("START_ACTIVE_SLOT_ERROR\r\n");
         printf("ACTIVE_SLOT:%lu\r\n",(unsigned long)flag_info->active_slot);
-
-        /*
-        * 使用STATE_ERROR表示当前设备状态
-        * 不允许更新这个目标。
-        *
-        * value返回当前active_slot，
-        * 方便Qt定位错误原因。
-        */
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_START_UPDATE,
@@ -658,22 +622,15 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
             (uint32_t)flag_info->active_slot);
         return;
     }
-    /*
-     * 计算运行区容量。
-     */
+
+    /*计算运行区容量。*/
     run_region_size = APP_RUN_END_ADDR - APP_RUN_ADDR + 1U;
 
-    /*
-     * BIN文件不能超过存储区和运行区。
-     */
+    /*BIN文件不能超过存储区和运行区。*/
     if ((start_info.image_size > target_region_size) ||
         (start_info.image_size > run_region_size))
     {
         printf("IMAGE_TOO_LARGE\r\n");
-        /*
-         * START声明的文件超过Flash区域容量。
-         * value返回上位机声明的文件大小。
-         */
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_START_UPDATE,
@@ -682,16 +639,55 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 准备开始擦除目标区。
-     */
-    if (start_info.target == UPDATE_APP_A)
+
+
+    current_version = Boot_FlagGetActiveImageVersion();
+
+    printf("CURRENT_IMAGE_VERSION:0x%08lX\r\n",(unsigned long)current_version);
+    printf("REQUEST_IMAGE_VERSION:0x%08lX\r\n",(unsigned long)start_info.image_version);
+
+    if(start_info.image_version == 0U)
     {
-        printf("ERASING_A\r\n");
+        printf("IMAGE_VERSION_INVALID\r\n");
+
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_VERSION_ERROR,
+            current_version);
+
+        return;
+    }
+
+    /*小于当前版本拒绝升级*/
+    if ((current_version != 0U) && (start_info.image_version < current_version))
+    {
+        printf("IMAGE_VERSION_DOWNGRADE_REJECTED\r\n");
+        (void)Boot_SendResponse(
+            CMD_NACK,
+            CMD_START_UPDATE,
+            BOOT_RESULT_VERSION_ERROR,
+            current_version);
+        return;
+    }
+
+    if (start_info.image_version == current_version)
+    {
+        printf("IMAGE_VERSION_REINSTALL\r\n");
     }
     else
     {
-        printf("ERASING_B\r\n");
+        printf("IMAGE_VERSION_UPGRADE_OK\r\n");
+    }
+
+    /*准备开始擦除目标区。*/
+    if (start_info.target == UPDATE_APP_A)
+    {
+        printf("prepare to erasing A\r\n");
+    }
+    else
+    {
+        printf("prepare to erasing B\r\n");
     }
 
     /*
@@ -702,17 +698,11 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
      * 下次启动也不会使用这份残缺固件。
      */
     status = Boot_FlagInvalidateImage(target_slot);
-
     if (status != HAL_OK)
     {
         protocol_update_state = BOOT_ERROR;
 
         printf("FLAG_INVALIDATE_ERROR\r\n");
-
-        /*
-         * Flag失效状态没有保存成功，
-         * 此时不能继续擦除目标固件区。
-         */
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_START_UPDATE,
@@ -724,20 +714,13 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
 
     printf("FLAG_INVALIDATE_OK\r\n");
 
-    /*
-     * Flag已经记录目标槽位无效，
-     * 现在才可以安全擦除目标区。
-     */
+    /*Flag已经记录目标槽位无效，现在才可以安全擦除目标区。*/
     status = Boot_StartUpdate(start_info.target);
-
     if (status != HAL_OK)
     {
         protocol_update_state = BOOT_ERROR;
         printf("ERASING_FAILED\r\n");
-        /*
-         * A区或者B区擦除失败。
-         * value返回HAL状态码。
-         */
+
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_START_UPDATE,
@@ -747,21 +730,15 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 擦除成功，保存START帧中的升级信息。
-     */
+    /*擦除成功，保存START帧中的升级信息*/
     protocol_update_info = start_info;
     protocol_update_state = BOOT_RECEIVE;
 
-    /*
-     * 新升级开始，接收计数和包序号从0开始。
-     */
+    /*新升级开始，接收计数和包序号从0开始*/
     protocol_received_size = 0U;
     protocol_expected_sequence = 0U;
 
-    /*
-     * 进入对应的A/B接收状态。
-     */
+    /*进入对应的A/B接收状态*/
     if (start_info.target == UPDATE_APP_A)
     {
         printf("RECEIVE_A\r\n");
@@ -774,12 +751,7 @@ static void Boot_HandleStartFrame(uint8_t *frame, uint16_t frame_len)
     printf("START_UPDATE_OK\r\n");
     printf("READY_SIZE:%lu\r\n", (unsigned long)protocol_update_info.image_size);
 
-    /*
-     * START处理成功。
-     *
-     * value返回本次升级目标：
-     * 1表示A区，2表示B区。
-     */
+    /*START处理成功*/
     (void)Boot_SendResponse(
         CMD_ACK,
         CMD_START_UPDATE,
@@ -956,9 +928,8 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     uint32_t packet_count;
     uint32_t image_addr;
     uint16_t calculated_image_crc;
-    /*
-     * 保存经过转换后的Flag槽位。
-     */
+
+    /*保存经过转换后的Flag槽位。*/
     Boot_SlotTypeDef ready_slot;
 
     /*
@@ -1037,10 +1008,7 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 如果不是重复END，
-     * 那么普通END只能在BOOT_RECEIVE状态下处理。
-     */
+    /*如果不是重复END，那么普通END只能在BOOT_RECEIVE状态下处理。*/
     if (protocol_update_state != BOOT_RECEIVE)
     {
         printf("END_WITHOUT_START\r\n");
@@ -1053,12 +1021,8 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
 
         return;
     }
-    /*
-     * protocol_expected_sequence从0开始，
-     * 每成功接收一包就加1。
-     *
-     * 因此它当前也等于已经成功接收的总包数。
-     */
+    
+    /*protocol_expected_sequence从0开始，每成功接收一包就加1, 因此它当前也等于已经成功接收的总包数*/
     if (packet_count != protocol_expected_sequence)
     {
         printf("PACKET_COUNT_ERROR\r\n");
@@ -1076,10 +1040,7 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 实际接收的BIN字节数必须等于
-     * START帧声明的整个文件大小。
-     */
+    /*实际接收的BIN字节数必须等于,START帧声明的整个文件大小。*/
     if (protocol_received_size != protocol_update_info.image_size)
     {
         printf("IMAGE_SIZE_ERROR\r\n");
@@ -1098,10 +1059,7 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     }
     printf("IMAGE_SIZE_OK\r\n");
 
-    /*
-     * 包数和文件大小均正确，
-     * 开始进行最终固件检查。
-     */
+    /*包数和文件大小均正确，开始进行最终固件检查。*/
     protocol_update_state = BOOT_CHECK;
 
     /*
@@ -1110,7 +1068,6 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
      * 如果缓存刚好为空，本函数直接返回HAL_OK。
      */
     status = Boot_FlushCache();
-
     if (status != HAL_OK)
     {
         protocol_update_state = BOOT_ERROR;
@@ -1124,10 +1081,7 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 根据START帧中的目标，
-     * 确定刚接收的固件位于A区还是B区。
-     */
+    /*根据START帧中的目标，确定刚接收的固件位于A区还是B区。*/
     if (protocol_update_info.target == UPDATE_APP_A)
     {
         image_addr = APP_A_ADDR;
@@ -1151,26 +1105,20 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
         return;
     }
 
-    /*
-     * 直接读取Flash中的真实BIN数据，
-     * 重新计算整个文件的Modbus CRC16。
-     */
+    /*直接读取Flash中的真实BIN数据，重新计算整个文件的Modbus CRC16。*/
     calculated_image_crc = Boot_CRC16_Modbus((const uint8_t *)image_addr, protocol_update_info.image_size);
 
     printf("EXPECTED_IMAGE_CRC:0x%04X\r\n", (unsigned int)protocol_update_info.image_crc);
     printf("CALCULATED_IMAGE_CRC:0x%04X\r\n", (unsigned int)calculated_image_crc);
+    printf("UPDATE_IMAGE_VERSION:0x%08lX\r\n",(unsigned long)protocol_update_info.image_version);
 
-    /*
-     * 与START帧中上位机提供的整个BIN CRC比较。
-     */
+    /*与START帧中上位机提供的整个BIN CRC比较。*/
     if (calculated_image_crc != protocol_update_info.image_crc)
     {
         protocol_update_state = BOOT_ERROR;
         printf("IMAGE_CRC_ERROR\r\n");
 
-        /*
-         * value的低16位返回实际计算出的固件CRC。
-         */
+        /*value的低16位返回实际计算出的固件CRC。*/
         (void)Boot_SendResponse(
             CMD_NACK,
             CMD_END_UPDATE,
@@ -1185,7 +1133,8 @@ static void Boot_HandleEndFrame(uint8_t *frame, uint16_t frame_len)
     status = Boot_FlagSetPendingImage(
         ready_slot,
         protocol_update_info.image_size,
-        protocol_update_info.image_crc);
+        protocol_update_info.image_crc,
+        protocol_update_info.image_version);
 
     if (status != HAL_OK)
     {
@@ -1523,7 +1472,6 @@ HAL_StatusTypeDef Boot_InstallPendingImage(void)
     printf("INSTALL_SOURCE:%lu\r\n", (unsigned long)flag_info->pending_slot);
     printf("INSTALL_SIZE:%lu\r\n", (unsigned long)image_size);
     printf("INSTALL_EXPECTED_CRC:0x%04X\r\n", (unsigned int)expected_crc);
-
     /*
      * 将Flag状态修改为INSTALLING。
      *
@@ -1655,9 +1603,18 @@ uint8_t Boot_RunImageValidForSlot(Boot_SlotTypeDef source_slot)
         return 0U;
     }
 
+    uint32_t version = image_info->image_version;
+
     printf("RUN_SOURCE:%lu\r\n", (unsigned long)source_slot);
     printf("RUN_SIZE:%lu\r\n", (unsigned long)image_info->image_size);
     printf("RUN_EXPECTED_CRC:0x%04X\r\n", (unsigned int)image_info->image_crc);
+    
+
+    printf("RUN_IMAGE_VERSION:V%lu.%lu.%lu.%lu\r\n",
+        (version >> 24) & 0xFF,
+        (version >> 16) & 0xFF,
+        (version >> 8)  & 0xFF,
+        version & 0xFF);
 
     /*根据运行区真实内容计算整个APP的CRC。*/
     calculated_crc = Boot_CRC16_Modbus((const uint8_t *)APP_RUN_ADDR, image_info->image_size);
@@ -1791,6 +1748,7 @@ uint8_t Boot_PrepareRunImage(void)
             }
 
             printf("BOOT_TRIAL_CONFIRM_OK\r\n");
+            printf("ACTIVE_IMAGE_VERSION:0x%08lX\r\n",(unsigned long)Boot_FlagGetActiveImageVersion());
 
             /*
             * 确认成功后，状态已经变成IDLE，

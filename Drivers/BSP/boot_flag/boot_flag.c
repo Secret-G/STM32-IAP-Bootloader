@@ -69,12 +69,14 @@ void Boot_FlagSetDefault(Boot_FlagInfoTypeDef *flag_info)
     flag_info->app_a.image_size = 0U;
     flag_info->app_a.image_crc = 0U;
     flag_info->app_a.reserved = 0U;
+		flag_info->app_a.image_version = 0U;
 
     /*设置B区固件信息*/
     flag_info->app_b.valid_mark = BOOT_IMAGE_INVALID_MARK;
     flag_info->app_b.image_size = 0U;
     flag_info->app_b.image_crc = 0U;
     flag_info->app_b.reserved = 0U;
+		flag_info->app_b.image_version = 0;
 
     /*设置当前运行区信息*/
     flag_info->active_slot = BOOT_SLOT_NONE;
@@ -407,14 +409,13 @@ const Boot_FlagInfoTypeDef *Boot_FlagGetInfo(void)
     return &boot_flag_info;
 }
 
-HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot, uint32_t image_size, uint16_t image_crc)
+HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot, uint32_t image_size, uint16_t image_crc, uint32_t image_version)
 {
     HAL_StatusTypeDef status;
     Boot_ImageInfoTypeDef *image_info;
 
-    /*
-     * 固件大小不能为0。
-     */
+
+    /*固件大小不能为0。*/
     if (image_size == 0U)
     {
         return HAL_ERROR;
@@ -444,7 +445,7 @@ HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot, uint32_t image
     image_info->valid_mark = BOOT_IMAGE_VALID_MARK;
     image_info->image_size = image_size;
     image_info->image_crc = image_crc;
-    image_info->reserved = 0U;
+    image_info->image_version = image_version;
 
     /*记录下一次需要搬运到运行区的槽位。*/
     boot_flag_info.pending_slot = slot;
@@ -465,6 +466,7 @@ HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot, uint32_t image
         Boot_FlagRead(&boot_flag_info);
         return status;
     }
+
     return HAL_OK;
 }
 
@@ -486,37 +488,26 @@ HAL_StatusTypeDef Boot_FlagInvalidateImage(Boot_SlotTypeDef slot)
         return HAL_ERROR;
     }
 
-    /*
-     * 将对应槽位标记为无效。
-     */
+    /*将对应槽位标记为无效。*/
     image_info->valid_mark = BOOT_IMAGE_INVALID_MARK;
     image_info->image_size = 0U;
     image_info->image_crc = 0U;
     image_info->reserved = 0U;
+	image_info->image_version = 0U;
 
-    /*
-     * 如果待安装的固件刚好来自当前槽位，
-     * 那么这个待安装任务也必须取消。
-     *
-     * 因为对应槽位接下来将被擦除。
-     */
+    /*如果待安装的固件刚好来自当前槽位，那么这个待安装任务也必须取消，因为对应槽位接下来将被擦除。*/
     if (boot_flag_info.pending_slot == slot)
     {
         boot_flag_info.pending_slot = BOOT_SLOT_NONE;
         boot_flag_info.install_state = BOOT_INSTALL_IDLE;
     }
 
-    /*
-     * 将新的无效状态保存进Flash标志区。
-     */
+    /*将新的无效状态保存进Flash标志区*/
     status = Boot_FlagWrite(&boot_flag_info);
 
     if (status != HAL_OK)
     {
-        /*
-         * 写入失败时重新读取Flash中的状态，
-         * 避免RAM与Flash内容不一致。
-         */
+        /*写入失败时重新读取Flash中的状态，避免RAM与Flash内容不一致。*/
         Boot_FlagRead(&boot_flag_info);
 
         return status;
@@ -815,6 +806,7 @@ HAL_StatusTypeDef Boot_FlagFinishRollback(void)
     failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
     failed_image->image_size = 0U;
     failed_image->image_crc = 0U;
+		failed_image->image_version = 0U;
 
     /*active_slot保持不变，因为它本来就是旧的可靠版本。*/
     boot_flag_info.pending_slot = BOOT_SLOT_NONE;
@@ -837,9 +829,7 @@ HAL_StatusTypeDef Boot_FlagAbortTrial(void)
     HAL_StatusTypeDef status;
     Boot_ImageInfoTypeDef *failed_image;
 
-    /*
-     * 只有正在试运行时才能放弃候选APP。
-     */
+    /*只有正在试运行时才能放弃候选APP。*/
     if (boot_flag_info.install_state != BOOT_INSTALL_TRIAL_RUNNING)
     {
         return HAL_ERROR;
@@ -851,9 +841,7 @@ HAL_StatusTypeDef Boot_FlagAbortTrial(void)
         return HAL_ERROR;
     }
 
-    /*
-     * 找到本次失败的候选固件。
-     */
+    /*找到本次失败的候选固件。*/
     if (boot_flag_info.pending_slot == BOOT_SLOT_A)
     {
         failed_image = &boot_flag_info.app_a;
@@ -871,6 +859,7 @@ HAL_StatusTypeDef Boot_FlagAbortTrial(void)
     failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
     failed_image->image_size = 0U;
     failed_image->image_crc = 0U;
+		failed_image->image_version = 0U;
 
     /*清除待处理槽位*/
     boot_flag_info.pending_slot = BOOT_SLOT_NONE;
@@ -885,4 +874,29 @@ HAL_StatusTypeDef Boot_FlagAbortTrial(void)
     }
 
     return HAL_OK;
+}
+
+
+uint32_t Boot_FlagGetActiveImageVersion(void)
+{
+    const Boot_ImageInfoTypeDef *image_info;
+
+    if (boot_flag_info.active_slot == BOOT_SLOT_A)
+    {
+        image_info = &boot_flag_info.app_a;
+    }
+    else if (boot_flag_info.active_slot == BOOT_SLOT_B)
+    {
+        image_info = &boot_flag_info.app_b;
+    }
+    else
+    {
+        return 0U;
+    }
+
+    if (image_info->valid_mark != BOOT_IMAGE_VALID_MARK)
+    {
+        return 0U;
+    }
+    return image_info->image_version;
 }

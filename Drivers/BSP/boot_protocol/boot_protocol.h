@@ -237,7 +237,10 @@ typedef enum
     BOOT_RESULT_IMAGE_CRC_ERROR = 0x0009,
 
     /*收到了当前Bootloader不支持的CMD。*/
-    BOOT_RESULT_UNKNOWN_CMD = 0x000A
+    BOOT_RESULT_UNKNOWN_CMD = 0x000A,
+
+    /*请求安装的固件版本不符合升级策略*/
+    BOOT_RESULT_VERSION_ERROR = 0x000BU
 } Boot_ResultTypeDef;
 
 
@@ -276,24 +279,21 @@ typedef struct
 
     /* 整个BIN文件的CRC16。 */
     uint16_t image_crc;
+	
+	/*START帧RESERVE中携带的固件版本,例如0x01020304表示V1.2.3.4。*/
+	int32_t image_version;
 
 } Boot_StartInfoTypeDef;
 
 typedef struct
 {
-    /*
-     * 指向当前协议帧中BIN数据的第一个字节。
-     * 对应&frame[BOOT_FRAME_DATA_OFFSET]。
-     */
+    /*指向当前协议帧中BIN数据的第一个字节，对应&frame[BOOT_FRAME_DATA_OFFSET]。*/
     uint8_t *data;
 
     /* 当前数据包实际携带的BIN字节数。 */
     uint16_t data_len;
 
-    /*
-     * 当前数据包序号，从0开始，
-     * 从协议帧的RESERVE字段中解析。
-     */
+    /*当前数据包序号，从0开始，从协议帧的RESERVE字段中解析。*/
     uint32_t sequence;
 
 } Boot_DataInfoTypeDef;
@@ -327,33 +327,19 @@ typedef struct
 
 /**
  * @brief 从完整协议帧中读取2字节CMD命令。
- *
- * CMD位于frame[0～1]，采用小端格式。
- *
  * @param frame 协议帧首地址。
- *
- * @return 解析得到的16位命令值。
  */
 uint16_t Boot_ParseCmd(uint8_t *frame);
 
 /**
  * @brief 从协议帧中读取2字节整帧总长度。
- *
- * 长度字段位于frame[2～3]，采用小端格式。
- * 返回值包含CMD、长度、DATA、RESERVE和CRC全部字段。
- *
  * @param frame 协议帧首地址。
- *
  * @return 整个协议帧的总字节数。
  */
 uint16_t Boot_ParseLength(uint8_t *frame);
 
 /**
  * @brief 从完整协议帧末尾读取发送方附带的CRC16。
- *
- * CRC位于整帧最后两个字节，采用小端格式。
- * 本函数只读取CRC，不重新计算CRC。
- *
  * @param frame     协议帧首地址。
  * @param total_len 整个协议帧的总字节数。
  */
@@ -361,26 +347,15 @@ uint16_t Boot_ParseCRC(uint8_t *frame,uint16_t total_len);
 
 /**
  * @brief 根据整帧总长度计算DATA字段长度。
- *
- * 计算公式：
- * DATA长度 = 整帧总长度 - 固定字段长度10。
- *
  * @param total_len 整个协议帧的总字节数。
- *
  * @return DATA字段长度；长度非法时返回0。
  */
 uint16_t Boot_GetDataLength(uint16_t total_len);
 
 /**
  * @brief 校验一张完整协议帧的CRC16。
- *
- * 本函数先读取帧尾CRC，再对CMD、长度、DATA和RESERVE
- * 重新计算Modbus CRC16，最后比较两个CRC。
- *
  * @param frame     协议帧首地址。
  * @param total_len 整个协议帧的总字节数。
- *
- * @return 1表示CRC正确，0表示CRC错误或参数非法。
  */
 uint8_t Boot_VerifyFrameCRC(uint8_t *frame,uint16_t total_len);
 

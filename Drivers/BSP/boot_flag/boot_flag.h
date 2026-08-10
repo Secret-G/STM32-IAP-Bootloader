@@ -12,7 +12,7 @@
  * 将来如果Boot_FlagInfoTypeDef字段发生变化，
  * 可以增加这个版本号，避免新版程序错误解析旧结构。
  */
-#define BOOT_FLAG_VERSION  2U
+#define BOOT_FLAG_VERSION  3U
 
 /*固件槽位类型固定使用uint32_t，保证写入Flash后的字段大小始终是4字节。*/
 typedef uint32_t Boot_SlotTypeDef;
@@ -83,6 +83,9 @@ typedef struct
 
     /*image_crc只有2字节，增加2字节reserved后，整个结构体大小可以保持4字节对齐。*/
     uint16_t reserved;
+
+    /*固件版本号，使用4个字节分别保存：*/
+    uint32_t image_version;
 
 } Boot_ImageInfoTypeDef;
 
@@ -162,12 +165,10 @@ const Boot_FlagInfoTypeDef *Boot_FlagGetInfo(void);
 /*将指定A/B槽位标记为无效，必须在擦除对应固件区之前调用， 防止升级中途掉电后将残缺固件认为有效。*/
 HAL_StatusTypeDef Boot_FlagInvalidateImage(Boot_SlotTypeDef slot);
 
-
-
 /*************************修改状态**************************/
 
 /*APP标记为接收完成并通过CRC校验的固件*/
-HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot,uint32_t image_size,uint16_t image_crc);
+HAL_StatusTypeDef Boot_FlagSetPendingImage(Boot_SlotTypeDef slot,uint32_t image_size,uint16_t image_crc, uint32_t image_version);
 
 /*APP标记为开始安装。*/
 HAL_StatusTypeDef Boot_FlagBeginInstall(void);
@@ -192,5 +193,12 @@ HAL_StatusTypeDef Boot_FlagBeginRollback(void);
 
 /*标记回滚完成，清除失败的候选固件信息，恢复到IDLE状态。*/
 HAL_StatusTypeDef Boot_FlagFinishRollback(void);
+
+/*
+ * 获取当前活动固件版本，
+ * 返回0：当前没有有效的活动固件，或者活动固件没有版本信息。
+ * 返回非0：当前活动固件的32位版本号。
+ */
+uint32_t Boot_FlagGetActiveImageVersion(void);
 
 #endif

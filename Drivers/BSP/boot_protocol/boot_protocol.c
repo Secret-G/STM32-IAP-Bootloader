@@ -1,7 +1,6 @@
 #include "boot_protocol.h"
 #include "boot_crc.h"
 
-
 uint16_t Boot_ParseCmd(uint8_t *frame)
 {
     uint16_t cmd;
@@ -169,27 +168,20 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
         return 0U;
     }
 
-    /*
-     * START帧固定为17字节。
-     * received_len表示接收器实际收到的字节数。
-     */
+    /*START帧固定为17字节,received_len表示接收器实际收到的字节数。*/
     if (received_len != BOOT_START_FRAME_SIZE)
     {
         return 0U;
     }
     
-    /*
-     *检查是不是开始命令
-     */
+    /*检查是不是开始命令*/
     cmd = Boot_ParseCmd(frame);
     if(cmd != (uint16_t)CMD_START_UPDATE)
     {
         return 0U;
     }
     
-    /*
-     *读取帧内部声明的总长度
-     */
+    /*读取帧内部声明的总长度*/
     total_len = Boot_ParseLength(frame);
 
     /**
@@ -203,17 +195,13 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
         return 0U;
      }
 
-    /*
-     * 检查当前START帧自己的CRC。
-     */
+    /*检查当前START帧自己的CRC。*/
     if (Boot_VerifyFrameCRC(frame,total_len) == 0U)
     {
         return 0U;
     }
 
-    /*
-     * 解析并检查目标A/B。
-     */
+    /*解析并检查目标A/B。*/
     target = Boot_ParseStartTarget(frame);
 
     if (target == UPDATE_NONE)
@@ -221,13 +209,13 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
         return 0U;
     }
 
-    /*
-     * 保存START帧解析结果。
-     */
+    /*保存START帧解析结果。*/
     start_info->target = target;
     start_info->image_size = Boot_ParseStartImageSize(frame);
     start_info->image_crc = Boot_ParseStartImageCRC(frame);
 
+    /*START帧的4字节RESERVE保存固件版本号。*/
+    start_info->image_version = Boot_ParseReserve(frame, total_len);
     /*
      * BIN文件长度不能为0。
      */

@@ -286,6 +286,27 @@ void MainWindow::sendStartFrame()
         return;
     }
 
+    quint32 imageVersion  = 0u;
+
+    if(!BootProtocol::parseVersion(ui->lineEditFirmwareVersion->text(),imageVersion))
+    {
+        ui->labelUpgradeStatusValue->setText("固件版本格式错误");
+        ui->plainTextEditLog->appendPlainText(
+            "[升级] 固件版本格式错误，请使用1.2.3.4格式，"
+            "每一级范围为0～255");
+        return;
+    }
+
+    /*
+     * 0.0.0.0保留为“没有版本信息”，
+     * 不允许作为正式固件版本。
+     */
+    if (imageVersion == 0U)
+    {
+        ui->labelUpgradeStatusValue->setText("固件版本不能为0.0.0.0");
+        ui->plainTextEditLog->appendPlainText("[升级] 固件版本不能为0.0.0.0");
+        return;
+    }
 
     const quint32 imageSize = static_cast<quint32>(firmwareData.size());
     const quint16 imageCrc = BootProtocol::crc16Modbus(firmwareData);
@@ -310,7 +331,7 @@ void MainWindow::sendStartFrame()
     ui->plainTextEditLog->appendPlainText(QString("[升级] BIN大小=%1字节，DATA总包数=%2").arg(imageSize).arg(totalPacketCount));
 
     /*根据目标、整个BIN大小和整个BIN CRC,构造完整START协议帧。*/
-    const QByteArray startFrame = BootProtocol::buildStartFrame(imageSize,imageCrc);
+    const QByteArray startFrame = BootProtocol::buildStartFrame(imageSize,imageCrc,imageVersion);
 
     if (startFrame.isEmpty())
     {
@@ -329,10 +350,7 @@ void MainWindow::sendStartFrame()
      */
     const qint64 written = serialPort->write(startFrame);
 
-    /*
-     * write()只是把数据放进Qt发送缓存。
-     * 必须确认17个字节全部成功进入发送缓存。
-     */
+    /*write()只是把数据放进Qt发送缓存,必须确认17个字节全部成功进入发送缓存。*/
     if (written != startFrame.size())
     {
         ui->plainTextEditLog->appendPlainText(
@@ -357,19 +375,13 @@ void MainWindow::sendStartFrame()
         return;
     }
 
-    /*
-     * 这是一次新的START请求，
-     * 重发次数从0开始。
-     */
+    /*这是一次新的START请求，重发次数从0开始*/
     retryCount = 0;
 
     /*保存当前正在等待应答的完整START帧*/
     pendingFrame = startFrame;
 
-    /*
-     * 记录当前等待的是START应答，
-     * 用于识别ACK/NACK以及显示日志。
-     */
+    /*记录当前等待的是START应答，用于识别ACK/NACK以及显示日志。*/
     pendingCommand = static_cast<quint16>(BootProtocol::CmdStartUpdate);
 
     /*开始等待STM32的START应答。*/
@@ -377,10 +389,7 @@ void MainWindow::sendStartFrame()
 
     ui->plainTextEditLog->appendPlainText(QString("[发送确认] START共%1字节，已交给串口驱动").arg(written));
 
-    /*
-     * 等待START应答期间锁定固件和目标，
-     * 防止用户中途更换。
-     */
+    /*等待START应答期间锁定固件和目标，防止用户中途更换。*/
     ui->pushButtonStartUpgrade->setEnabled(false);
     ui->labelUpgradeStatusValue->setText("等待START应答");
     ui->labelLastResponseValue->setText("--");
@@ -389,6 +398,12 @@ void MainWindow::sendStartFrame()
                                               .arg(QString::number(imageCrc, 16)
                                               .rightJustified(4, '0')
                                               .toUpper()));
+    ui->plainTextEditLog->appendPlainText(
+        QString("[升级] 固件版本=%1，编码值=0x%2")
+            .arg(ui->lineEditFirmwareVersion->text().trimmed())
+            .arg(QString::number(imageVersion, 16)
+                     .rightJustified(8, '0')
+                     .toUpper()));
 
     ui->plainTextEditLog->appendPlainText("[发送] " + QString::fromLatin1(startFrame.toHex(' ').toUpper()));
 
@@ -633,21 +648,33 @@ void MainWindow::onSerialReadyRead()
                 retryCount = 0;
             }
             ui->labelLastResponseValue->setText("NACK");
-            ui->labelUpgradeStatusValue->setText("START失败");
-            ui->plainTextEditLog->appendPlainText(
-                QString("[应答] NACK，原命令=0x%1，"
-                    "错误=0x%2，附加值=%3")
-                    .arg(QString::number(response.requestCommand,16)
-                            .rightJustified(4, '0')
-                            .toUpper())
-                    .arg(QString::number(response.result,16)
-                            .rightJustified(4, '0')
-                            .toUpper())
-                    .arg(response.value));
-
+            if ((response.requestCommand == BootProtocol::CmdStartUpdate) &&
+                (response.result == BootProtocol::BOOT_RESULT_VERSION_ERROR))
+            {
+                const QString currentVersion = BootProtocol::formatVersion(response.value);
+                ui->labelUpgradeStatusValue->setText(QString("版本过低，设备当前版本为%1").arg(currentVersion));
+                ui->plainTextEditLog->appendPlainText(QString("[版本拒绝] 请求固件版本低于设备当前版本%1").arg(currentVersion));
+            }
+            else
+            {
+                ui->labelUpgradeStatusValue->setText("START失败");
+                ui->plainTextEditLog->appendPlainText(
+                    QString("[应答] NACK，原命令=0x%1，"
+                        "错误=0x%2，附加值=%3")
+                        .arg(QString::number(response.requestCommand,16)
+                                .rightJustified(4, '0')
+                                .toUpper())
+                        .arg(QString::number(response.result,16)
+                                .rightJustified(4, '0')
+                                .toUpper())
+                        .arg(response.value));
+                ui->progressBarUpgrade->setValue(0);
+                ui->progressBarUpgrade->setFormat("0% · 版本拒绝");
+            }
             /* NACK后允许用户重新选择并重试。*/
             ui->pushButtonBrowseBin->setEnabled(true);
-
+            ui->progressBarUpgrade->setValue(0);
+            ui->progressBarUpgrade->setFormat("0% · 升级失败");
             ui->pushButtonStartUpgrade->setEnabled(serialPort->isOpen() && !firmwareData.isEmpty());
         }
     }

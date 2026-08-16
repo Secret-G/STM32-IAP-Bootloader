@@ -416,10 +416,7 @@ void MainWindow::onSerialReadyRead()
     responseBuffer.append(serialPort->readAll());
     constexpr qsizetype responseFrameSize = 14;
 
-    /*
-     * 数据不足14字节时先不解析，
-     * 等下一次readyRead继续追加。
-     */
+    /*数据不足14字节时先不解析，等下一次readyRead继续追加*/
     while (responseBuffer.size() >= responseFrameSize)
     {
         /* 从缓存最前面取出一张14字节应答。*/
@@ -448,8 +445,7 @@ void MainWindow::onSerialReadyRead()
          */
         responseBuffer.remove(0,responseFrameSize);
 
-        ui->plainTextEditLog->appendPlainText("[接收] " +
-            QString::fromLatin1(frame.toHex(' ').toUpper()));
+        ui->plainTextEditLog->appendPlainText("[接收] " + QString::fromLatin1(frame.toHex(' ').toUpper()));
 
         /* 判断ACK还是NACK。*/
         if (response.responseCommand == BootProtocol::CmdAck)

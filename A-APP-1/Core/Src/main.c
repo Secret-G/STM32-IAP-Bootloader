@@ -69,7 +69,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+	uint8_t ch;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -92,9 +92,17 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
-  MX_IWDG_Init();
+  //MX_IWDG_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-	App_TrialInit();
+	//App_TrialInit();
+	printf("ESP8266 TEST START\r\n");
+	uint8_t cmd[]="AT\r\n";
+
+  HAL_UART_Transmit(&huart3,
+                      cmd,
+                      sizeof(cmd)-1,
+                      1000);
 
   /* USER CODE END 2 */
 
@@ -105,7 +113,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		App_TrialProcess();
+		//App_TrialProcess();
 
     printf("app1 running......\r\n");
 		HAL_GPIO_WritePin(GPIOF,GPIO_PIN_9,GPIO_PIN_RESET);
@@ -113,6 +121,11 @@ int main(void)
 
 		HAL_GPIO_WritePin(GPIOF,GPIO_PIN_9,GPIO_PIN_SET);
 		HAL_Delay(500);
+		
+    if(HAL_UART_Receive(&huart3,&ch,1,100)==HAL_OK)
+    {
+        printf("RX:%c\r\n",ch);
+    }
   }
   /* USER CODE END 3 */
 }

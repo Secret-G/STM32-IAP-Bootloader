@@ -41,10 +41,7 @@ HAL_StatusTypeDef Boot_WriteCache(const uint8_t *data, uint32_t len)
         return HAL_ERROR;
     }
 
-    /*
-     * 如果上一次4字节写入失败，flash_cache_len会保持为4。
-     * 此时拒绝继续写，防止缓存越界。
-     */
+    /*如果上一次4字节写入失败，flash_cache_len会保持为4，此时拒绝继续写，防止缓存越界。*/
     if (flash_cache_len >= sizeof(flash_cache))
     {
         return HAL_ERROR;

@@ -100,8 +100,6 @@ int main(void)
     /* USER CODE BEGIN 3 */
     led_on();
     Bootloader_Process();
-
-
   }
   /* USER CODE END 3 */
 }

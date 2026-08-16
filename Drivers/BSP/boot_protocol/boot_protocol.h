@@ -300,27 +300,16 @@ typedef struct
 
 typedef struct
 {
-    /*
-     * 用来保存正在接收的完整协议帧。
-     * 最大可以保存266字节。
-     */
+    /*用来保存正在接收的完整协议帧，最大可以保存266字节。*/
     uint8_t buffer[BOOT_FRAME_MAX_SIZE];
 
-    /*
-     * 当前已经放入buffer的字节数。
-     */
+    /*当前已经放入buffer的字节数。*/
     uint16_t received_len;
 
-    /*
-     * 从frame[2～3]解析出来的整帧目标长度。
-     * 没收够前4字节时，该值为0。
-     */
+    /*从frame[2～3]解析出来的整帧目标长度，没收够前4字节时，该值为0。*/
     uint16_t expected_len;
 
-    /*
-     * 完整帧是否已经接收完成：
-     * 0表示没有完成，1表示已经完成。
-     */
+    /*完整帧是否已经接收完成：0表示没有完成，1表示已经完成*/
     uint8_t frame_ready;
 
 } Boot_RxContextTypeDef;

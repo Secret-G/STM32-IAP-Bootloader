@@ -51,9 +51,7 @@ uint8_t Boot_FlagMagicValid(void)
 
 void Boot_FlagSetDefault(Boot_FlagInfoTypeDef *flag_info)
 {
-    /*
-     * 防止调用者传入空地址。
-     */
+    /* 防止调用者传入空地址。*/
     if (flag_info == NULL)
     {
         return;
@@ -69,14 +67,14 @@ void Boot_FlagSetDefault(Boot_FlagInfoTypeDef *flag_info)
     flag_info->app_a.image_size = 0U;
     flag_info->app_a.image_crc = 0U;
     flag_info->app_a.reserved = 0U;
-		flag_info->app_a.image_version = 0U;
+	flag_info->app_a.image_version = 0U;
 
     /*设置B区固件信息*/
     flag_info->app_b.valid_mark = BOOT_IMAGE_INVALID_MARK;
     flag_info->app_b.image_size = 0U;
     flag_info->app_b.image_crc = 0U;
     flag_info->app_b.reserved = 0U;
-		flag_info->app_b.image_version = 0;
+	flag_info->app_b.image_version = 0;
 
     /*设置当前运行区信息*/
     flag_info->active_slot = BOOT_SLOT_NONE;
@@ -163,10 +161,7 @@ static void Boot_FlagReadCopy(uint32_t flash_addr, Boot_FlagInfoTypeDef *flag_in
         return;
     }
 
-    /*
-     * 只允许读取我们规划的两个Flag副本，
-     * 防止错误地址被当成Flag解析。
-     */
+    /*只允许读取我们规划的两个Flag副本，防止错误地址被当成Flag解析。*/
     if ((flash_addr != FLAG_COPY0_ADDR) && (flash_addr != FLAG_COPY1_ADDR))
     {
         return;
@@ -384,10 +379,7 @@ HAL_StatusTypeDef Boot_FlagInit(void)
      */
     Boot_FlagSetDefault(&boot_flag_info);
 
-    /*
-     * 当前没有任何有效副本。
-     * 保持current_addr为0，Boot_FlagWrite()会把第一份Flag写入COPY0。
-     */
+    /*当前没有任何有效副本，保持current_addr为0，Boot_FlagWrite()会把第一份Flag写入COPY0。*/
     boot_flag_current_addr = 0U;
 
     status = Boot_FlagWrite(&boot_flag_info);
@@ -521,9 +513,7 @@ HAL_StatusTypeDef Boot_FlagBeginInstall(void)
     HAL_StatusTypeDef status;
     const Boot_ImageInfoTypeDef *image_info;
 
-    /*
-     * 根据pending_slot找到待安装固件信息。
-     */
+    /*根据pending_slot找到待安装固件信息。*/
     if (boot_flag_info.pending_slot == BOOT_SLOT_A)
     {
         image_info = &boot_flag_info.app_a;
@@ -537,27 +527,19 @@ HAL_StatusTypeDef Boot_FlagBeginInstall(void)
         return HAL_ERROR;
     }
 
-    /*
-     * 待安装固件必须有效且大小不能为0。
-     */
-    if ((image_info->valid_mark != BOOT_IMAGE_VALID_MARK) ||
-        (image_info->image_size == 0U))
+    /*待安装固件必须有效且大小不能为0*/
+    if ((image_info->valid_mark != BOOT_IMAGE_VALID_MARK) || (image_info->image_size == 0U))
     {
         return HAL_ERROR;
     }
 
-    /*
-     * 上一次安装过程中复位了，
-     * 保持INSTALLING并允许重新搬运。
-     */
+    /*上一次安装过程中复位了，保持INSTALLING并允许重新搬运。*/
     if (boot_flag_info.install_state == BOOT_INSTALLING)
     {
         return HAL_OK;
     }
 
-    /*
-     * 正常情况下只能从PENDING开始安装。
-     */
+    /*正常情况下只能从PENDING开始安装*/
     if (boot_flag_info.install_state != BOOT_INSTALL_PENDING)
     {
         return HAL_ERROR;
@@ -586,8 +568,7 @@ HAL_StatusTypeDef Boot_FlagFinishInstall(void)
     }
 
     /*pending_slot必须是合法的A或B。*/
-    if ((boot_flag_info.pending_slot != BOOT_SLOT_A) &&
-        (boot_flag_info.pending_slot != BOOT_SLOT_B))
+    if ((boot_flag_info.pending_slot != BOOT_SLOT_A) && (boot_flag_info.pending_slot != BOOT_SLOT_B))
     {
         return HAL_ERROR;
     }
@@ -605,7 +586,6 @@ HAL_StatusTypeDef Boot_FlagFinishInstall(void)
 
     /*将最终状态保存到Flash。*/
     status = Boot_FlagWrite(&boot_flag_info);
-
     if (status != HAL_OK)
     {
         Boot_FlagRead(&boot_flag_info);
@@ -667,10 +647,6 @@ HAL_StatusTypeDef Boot_FlagBeginTrial(void)
 
     if (status != HAL_OK)
     {
-        /*
-         * 提交失败时，重新读取Flash中最后一份有效Flag，
-         * 避免RAM状态与Flash状态不一致。
-         */
         Boot_FlagRead(&boot_flag_info);
         return status;
     }
@@ -806,7 +782,7 @@ HAL_StatusTypeDef Boot_FlagFinishRollback(void)
     failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
     failed_image->image_size = 0U;
     failed_image->image_crc = 0U;
-		failed_image->image_version = 0U;
+	failed_image->image_version = 0U;
 
     /*active_slot保持不变，因为它本来就是旧的可靠版本。*/
     boot_flag_info.pending_slot = BOOT_SLOT_NONE;
@@ -859,7 +835,7 @@ HAL_StatusTypeDef Boot_FlagAbortTrial(void)
     failed_image->valid_mark = BOOT_IMAGE_INVALID_MARK;
     failed_image->image_size = 0U;
     failed_image->image_crc = 0U;
-		failed_image->image_version = 0U;
+	failed_image->image_version = 0U;
 
     /*清除待处理槽位*/
     boot_flag_info.pending_slot = BOOT_SLOT_NONE;

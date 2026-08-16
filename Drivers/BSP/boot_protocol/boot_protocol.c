@@ -184,13 +184,8 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
     /*读取帧内部声明的总长度*/
     total_len = Boot_ParseLength(frame);
 
-    /**
-     * START帧的长度字节必须是17
-     * 而且必须与实际收到的长度一致
-     */
-
-     if((total_len != BOOT_START_FRAME_SIZE) 
-     || (total_len != received_len))
+    /*START帧的长度字节必须是17，而且必须与实际收到的长度一致*/
+     if((total_len != BOOT_START_FRAME_SIZE) || (total_len != received_len))
      {
         return 0U;
      }
@@ -216,9 +211,8 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
 
     /*START帧的4字节RESERVE保存固件版本号。*/
     start_info->image_version = Boot_ParseReserve(frame, total_len);
-    /*
-     * BIN文件长度不能为0。
-     */
+
+    /*BIN文件长度不能为0*/
     if (start_info->image_size == 0U)
     {
         return 0U;
@@ -232,76 +226,43 @@ uint8_t Boot_ParseDataFrame(uint8_t *frame,uint16_t received_len,Boot_DataInfoTy
     uint16_t total_len;
     uint16_t data_len;
 
-    /*
-     * 检查输入和输出地址。
-     */
-    if ((frame == NULL) ||
-        (data_info == NULL))
+    /*检查输入和输出地址。*/
+    if ((frame == NULL) || (data_info == NULL)){    return 0U;  }
+
+    /*DATA帧实际长度必须在11～266字节之间。*/
+    if ((received_len < BOOT_DATA_MIN_FRAME_SIZE) || (received_len > BOOT_DATA_MAX_FRAME_SIZE))
     {
         return 0U;
     }
 
-    /*
-     * DATA帧实际长度必须在11～266字节之间。
-     */
-    if ((received_len < BOOT_DATA_MIN_FRAME_SIZE) ||
-        (received_len > BOOT_DATA_MAX_FRAME_SIZE))
-    {
-        return 0U;
-    }
-
-    /*
-     * 检查当前帧是不是DATA命令。
-     */
+    /*检查当前帧是不是DATA命令*/
     cmd = Boot_ParseCmd(frame);
+    if (cmd != (uint16_t)CMD_DATA_PACKET){  return 0U;  }
 
-    if (cmd != (uint16_t)CMD_DATA_PACKET)
-    {
-        return 0U;
-    }
-
-    /*
-     * 读取帧内部声明的总长度。
-     */
+    /*读取帧内部声明的总长度*/
     total_len = Boot_ParseLength(frame);
 
-    /*
-     * 帧内声明长度必须等于实际收到的长度。
-     */
-    if (total_len != received_len)
-    {
-        return 0U;
-    }
+    /*帧内声明长度必须等于实际收到的长度*/
+    if (total_len != received_len){ return 0U;  }
 
-    /*
-     * 根据总长度计算当前包的BIN数据长度。
-     */
+    /*根据总长度计算当前包的BIN数据长度。*/
     data_len = Boot_GetDataLength(total_len);
 
-    /*
-     * BIN数据长度必须在1～256字节之间。
-     */
-    if ((data_len < BOOT_DATA_MIN_DATA_SIZE) ||
-        (data_len > BOOT_DATA_MAX_DATA_SIZE))
+    /*BIN数据长度必须在1～256字节之间*/
+    if ((data_len < BOOT_DATA_MIN_DATA_SIZE) || (data_len > BOOT_DATA_MAX_DATA_SIZE))
     {
         return 0U;
     }
 
-    /*
-     * 检查当前DATA帧自己的CRC。
-     */
+    /*检查当前DATA帧自己的CRC。*/
     if (Boot_VerifyFrameCRC(frame, total_len) == 0U)
     {
         return 0U;
     }
 
-    /*
-     * 保存DATA帧解析结果。
-     */
+    /*保存DATA帧解析结果*/
     data_info->data = &frame[BOOT_FRAME_DATA_OFFSET];
-
     data_info->data_len = data_len;
-
     data_info->sequence = Boot_ParseReserve(frame, total_len);
 
     return 1U;
@@ -313,25 +274,19 @@ uint8_t Boot_ParseEndFrame(uint8_t *frame, uint16_t received_len, uint32_t *pack
     uint16_t total_len;
     uint32_t count;
 
-    /*
-     * 检查输入和输出地址。
-     */
+    /*检查输入和输出地址。*/
     if ((frame == NULL) || (packet_count == NULL))
     {
         return 0U;
     }   
 
-    /*
-     * END帧固定为10字节。
-     */
+    /*END帧固定为10字节。*/
     if (received_len != BOOT_END_FRAME_SIZE)
     {
         return 0U;
     }
 
-    /*
-     * 检查CMD是不是结束升级命令。
-     */
+    /*检查CMD是不是结束升级命令。*/
     cmd = Boot_ParseCmd(frame);
 
     if (cmd != (uint16_t)CMD_END_UPDATE)
@@ -339,48 +294,32 @@ uint8_t Boot_ParseEndFrame(uint8_t *frame, uint16_t received_len, uint32_t *pack
         return 0U;
     }
 
-    /*
-     * 读取END帧内部声明的总长度。
-     */
+    /*读取END帧内部声明的总长度。*/
     total_len = Boot_ParseLength(frame);
 
-    /*
-     * 长度字段必须是10，
-     * 并且必须等于实际收到的长度。
-     */
-    if ((total_len != BOOT_END_FRAME_SIZE) ||
-        (total_len != received_len))
+    /*长度字段必须是10，并且必须等于实际收到的长度。*/
+    if ((total_len != BOOT_END_FRAME_SIZE) || (total_len != received_len))
     {
         return 0U;
     }
 
-    /*
-     * 检查当前END帧自己的CRC。
-     */
+    /* 检查当前END帧自己的CRC*/
     if (Boot_VerifyFrameCRC(frame,total_len) == 0U)
     {
         return 0U;
     }
 
-    /*
-     * END帧的RESERVE中保存DATA总包数。
-     */
+    /*END帧的RESERVE中保存DATA总包数*/
     count = Boot_ParseReserve(frame,total_len);
 
-    /*
-     * 已经开始了一个有效升级，
-     * DATA总包数不应该是0。
-     */
+    /*已经开始了一个有效升级，DATA总包数不应该是0*/
     if (count == 0U)
     {
         return 0U;
     }
 
-    /*
-     * 所有检查通过后，才输出包数量。
-     */
+    /*所有检查通过后，才输出包数量。*/
     *packet_count = count;
-
     return 1U;
 }
 
@@ -391,10 +330,7 @@ void Boot_RxInit(Boot_RxContextTypeDef *context)
         return;
     }
 
-    /*
-     * 不需要清空整个buffer。
-     * received_len会限定哪些数据是有效数据。
-     */
+    /*不需要清空整个buffer，received_len会限定哪些数据是有效数据。*/
     context->received_len = 0U;
     context->expected_len = 0U;
     context->frame_ready = 0U;
@@ -408,29 +344,20 @@ Boot_RxResultTypeDef Boot_RxInputByte(Boot_RxContextTypeDef *context,uint8_t byt
         return BOOT_RX_FRAME_ERROR;
     }
 
-    /*
-     * 上一张完整帧还没有被取走和处理，
-     * 此时不允许继续覆盖buffer。
-     */
-
+    /*上一张完整帧还没有被取走和处理，此时不允许继续覆盖buffer。*/
     if(context->frame_ready != 0U)
     {
         return BOOT_RX_FRAME_READY;
     }
 
-   /*
-     * 防止数组越界。
-     */
+   /*防止数组越界。*/
     if (context->received_len >= BOOT_FRAME_MAX_SIZE)
     {
         Boot_RxInit(context);
         return BOOT_RX_FRAME_ERROR;
     }
 
-
-    /*
-     * 保存当前字节，然后将已接收长度加1。
-     */
+    /*保存当前字节，然后将已接收长度加1。*/
     context->buffer[context->received_len] = byte;
     context->received_len++;
 
@@ -474,17 +401,13 @@ uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context, uint8_t **frame, uint16_
         return 0U;
     }
 
-    /*
-     * 当前还没有完整帧。
-     */
+    /*当前还没有完整帧。*/
     if (context->frame_ready == 0U)
     {
         return 0U;
     }
 
-    /*
-     * 返回接收器内部buffer的地址和完整帧长度。
-     */
+    /*返回接收器内部buffer的地址和完整帧长度。*/
     *frame = context->buffer;
     *frame_len = context->expected_len;
 

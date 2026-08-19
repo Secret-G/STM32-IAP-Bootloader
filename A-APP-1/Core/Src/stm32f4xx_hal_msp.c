@@ -78,4 +78,55 @@ void HAL_MspInit(void)
 
 /* USER CODE BEGIN 1 */
 
+/**
+  * @brief ETH MSP Initialization
+  *        Configures the STM32F407 RMII pins used by the LAN8720A.
+  * @param heth ETH handle
+  */
+void HAL_ETH_MspInit(ETH_HandleTypeDef *heth)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  if (heth->Instance == ETH)
+  {
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOG_CLK_ENABLE();
+    __HAL_RCC_ETH_CLK_ENABLE();
+
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF11_ETH;
+
+    /* PA1: RMII_REF_CLK, PA2: MDIO, PA7: RMII_CRS_DV */
+    GPIO_InitStruct.Pin = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_7;
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    /* PC1: MDC, PC4: RMII_RXD0, PC5: RMII_RXD1 */
+    GPIO_InitStruct.Pin = GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    /* PG11: RMII_TX_EN, PG13: RMII_TXD0, PG14: RMII_TXD1 */
+    GPIO_InitStruct.Pin = GPIO_PIN_11 | GPIO_PIN_13 | GPIO_PIN_14;
+    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
+  }
+}
+
+/**
+  * @brief ETH MSP De-Initialization
+  * @param heth ETH handle
+  */
+void HAL_ETH_MspDeInit(ETH_HandleTypeDef *heth)
+{
+  if (heth->Instance == ETH)
+  {
+    __HAL_RCC_ETH_CLK_DISABLE();
+
+    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_7);
+    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_1 | GPIO_PIN_4 | GPIO_PIN_5);
+    HAL_GPIO_DeInit(GPIOG, GPIO_PIN_11 | GPIO_PIN_13 | GPIO_PIN_14);
+  }
+}
+
 /* USER CODE END 1 */

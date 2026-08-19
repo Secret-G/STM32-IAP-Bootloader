@@ -19,12 +19,16 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "iwdg.h"
+#include "lwip.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app_trial.h"
+#include "ethernetif.h"
+#include "netif.h"
+#include "lwip.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -69,7 +73,7 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-	uint8_t ch;
+  int32_t phy_link_state;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -91,19 +95,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  MX_USART2_UART_Init();
-  //MX_IWDG_Init();
-  MX_USART3_UART_Init();
+ // MX_IWDG_Init();
+  MX_LWIP_Init();
+  MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
 	//App_TrialInit();
-	printf("ESP8266 TEST START\r\n");
-	uint8_t cmd[]="AT\r\n";
-
-  HAL_UART_Transmit(&huart3,
-                      cmd,
-                      sizeof(cmd)-1,
-                      1000);
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -114,18 +110,19 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 		//App_TrialProcess();
+		MX_LWIP_Process();
+
+    phy_link_state = ethernetif_get_phy_link_state();
+    printf("PHY link state = %ld\r\n",(long)phy_link_state);
+    printf("LwIP link state = %d\r\n", netif_is_link_up(&gnetif));
 
     printf("app1 running......\r\n");
 		HAL_GPIO_WritePin(GPIOF,GPIO_PIN_9,GPIO_PIN_RESET);
-    HAL_Delay(500U);
+    HAL_Delay(100U);
 
 		HAL_GPIO_WritePin(GPIOF,GPIO_PIN_9,GPIO_PIN_SET);
-		HAL_Delay(500);
+		HAL_Delay(100);
 		
-    if(HAL_UART_Receive(&huart3,&ch,1,100)==HAL_OK)
-    {
-        printf("RX:%c\r\n",ch);
-    }
   }
   /* USER CODE END 3 */
 }

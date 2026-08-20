@@ -90,9 +90,9 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
-  MX_IWDG_Init();
+  //MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
-	App_TrialInit();
+	//App_TrialInit();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -102,7 +102,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		App_TrialProcess();
+		//App_TrialProcess();
 		printf("app2 runing......\r\n");
 		
 		HAL_GPIO_WritePin(GPIOF,GPIO_PIN_10,GPIO_PIN_RESET);

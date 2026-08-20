@@ -57,7 +57,7 @@ void App_TrialProcess(void)
      */
     if (app_trial_pending == 0U)
     {
-				App_WatchdogFeed();
+		App_WatchdogFeed();
         return;
     }
 
@@ -66,7 +66,7 @@ void App_TrialProcess(void)
      */
     if ((HAL_GetTick() - app_trial_start_tick) < APP_TRIAL_CONFIRM_DELAY_MS)
     {
-				App_WatchdogFeed();
+		App_WatchdogFeed();
         return;
     }
 

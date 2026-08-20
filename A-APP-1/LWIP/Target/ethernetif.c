@@ -277,8 +277,7 @@ static void low_level_init(struct netif *netif)
     UserPhyIOCtx.WriteReg = ETH_PHY_IO_WriteReg;
     UserPhyIOCtx.GetTick = ETH_PHY_IO_GetTick;
 
-    if (USER_PHY_RegisterBusIO(&UserPhy,
-                               &UserPhyIOCtx) != USER_PHY_STATUS_OK)
+    if (USER_PHY_RegisterBusIO(&UserPhy,&UserPhyIOCtx) != USER_PHY_STATUS_OK)
     {
         hal_eth_init_status = HAL_ERROR;
     }
@@ -627,8 +626,7 @@ void ethernet_link_thread(void* argument)
   phy_link_state = USER_PHY_GetLinkState(&UserPhy);
 
   /* 已连接变为断开 */
-  if (netif_is_link_up(netif) &&
-      (phy_link_state == USER_PHY_STATUS_LINK_DOWN))
+  if (netif_is_link_up(netif) && (phy_link_state == USER_PHY_STATUS_LINK_DOWN))
   {
       if (HAL_ETH_Stop_IT(&heth) == HAL_OK)
       {
@@ -637,8 +635,7 @@ void ethernet_link_thread(void* argument)
   }
 
   /* 未连接变为有效连接 */
-  else if ((!netif_is_link_up(netif)) &&
-          (phy_link_state > USER_PHY_STATUS_LINK_DOWN))
+  else if ((!netif_is_link_up(netif)) && (phy_link_state > USER_PHY_STATUS_LINK_DOWN))
   {
       link_changed = 0;
 

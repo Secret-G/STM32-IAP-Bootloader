@@ -1,6 +1,7 @@
 #ifndef __BOOT_PROTOCOL_H
 #define __BOOT_PROTOCOL_H
-#include "boot_cache.h"
+#include <stddef.h>
+#include <stdint.h>
 
 /*
  * 通用协议帧各字段长度，单位均为字节。

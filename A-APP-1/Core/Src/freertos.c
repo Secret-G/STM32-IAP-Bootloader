@@ -25,7 +25,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "tcp_server.h"
+#include <stdio.h>
+#include "app_trial.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -46,10 +48,27 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 osThreadId_t ledTaskHandle;
+osThreadId_t tcpServerTaskHandle;
+osThreadId_t AppTrialHandle;
 
 const osThreadAttr_t ledTask_attributes =
 {
     .name = "ledTask",
+    .stack_size = 128 * 4,
+    .priority = (osPriority_t)osPriorityLow,
+};
+
+const osThreadAttr_t tcpServerTask_attributes =
+{
+    .name = "tcpServerTask",
+    .stack_size = 512 * 4,
+    .priority = (osPriority_t)osPriorityBelowNormal,
+};
+
+
+const osThreadAttr_t apptrial_attributes =
+{
+    .name = "apptrial",
     .stack_size = 128 * 4,
     .priority = (osPriority_t)osPriorityLow,
 };
@@ -67,6 +86,7 @@ const osThreadAttr_t defaultTask_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
 void StartLedTask(void *argument);
+void AppTrialProcess(void *argument);
 /* USER CODE END FunctionPrototypes */
 
 void StartDefaultTask(void *argument);
@@ -107,6 +127,8 @@ void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   ledTaskHandle = osThreadNew(StartLedTask,NULL,&ledTask_attributes);
+
+  AppTrialHandle = osThreadNew(AppTrialProcess,NULL,&apptrial_attributes);
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
@@ -127,6 +149,12 @@ void StartDefaultTask(void *argument)
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN StartDefaultTask */
+  tcpServerTaskHandle = osThreadNew(TcpServerTask, NULL,&tcpServerTask_attributes);
+  if (tcpServerTaskHandle == NULL)
+  {
+    printf("TCP: task create failed\r\n");
+  }
+
   /* Infinite loop */
   for(;;)
   {
@@ -144,6 +172,16 @@ void StartLedTask(void *argument)
     {
         HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_9);
 				HAL_GPIO_TogglePin(GPIOF, GPIO_PIN_10);
+        osDelay(500);
+    }
+}
+
+
+void AppTrialProcess(void *argument)
+{
+    for (;;)
+    {
+      App_TrialProcess();
         osDelay(500);
     }
 }

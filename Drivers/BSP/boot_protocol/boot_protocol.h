@@ -6,9 +6,14 @@
  * 通用协议帧各字段长度，单位均为字节。
  *
  * 帧格式：
- * CMD(2B) + TOTAL_LEN(2B) + DATA(NB)
+ * SOF(2B) + CMD(2B) + TOTAL_LEN(2B) + DATA(NB)
  * + RESERVE(4B) + CRC16(2B)
  */
+/*固定帧头，按照BYTE0、BYTE1的顺序在线上传输。*/
+#define BOOT_FRAME_SOF_BYTE0       0xAAU
+#define BOOT_FRAME_SOF_BYTE1       0x55U
+#define BOOT_FRAME_SOF_SIZE        2U
+
 /*CMD 命令字段长度*/
 #define BOOT_FRAME_CMD_SIZE        2U
 
@@ -23,41 +28,48 @@
 
 /*
  * 除DATA以外的固定字段总长度：
- * 2B CMD + 2B LENGTH + 4B RESERVE + 2B CRC = 10B。
+ * 2B SOF + 2B CMD + 2B LENGTH + 4B RESERVE + 2B CRC = 12B。
  */
-#define BOOT_FRAME_FIXED_SIZE      10U
+#define BOOT_FRAME_FIXED_SIZE      \
+    (BOOT_FRAME_SOF_SIZE +         \
+     BOOT_FRAME_CMD_SIZE +         \
+     BOOT_FRAME_LENGTH_SIZE +      \
+     BOOT_FRAME_RESERVE_SIZE +     \
+     BOOT_FRAME_CRC_SIZE)
 
 /*
  * 最小协议帧长度。
- * 当DATA长度为0时，帧中仍然包含10字节固定字段。
+ * 当DATA长度为0时，帧中仍然包含12字节固定字段。
  */
-#define BOOT_FRAME_MIN_SIZE        10U
+#define BOOT_FRAME_MIN_SIZE        BOOT_FRAME_FIXED_SIZE
 
 /* 单个协议帧允许携带的最大DATA长度。 */
 #define BOOT_FRAME_MAX_DATA_SIZE   256U
 
 /*
  * 最大协议帧长度：
- * 固定字段10字节 + 最大DATA 256字节 = 266字节。
+ * 固定字段12字节 + 最大DATA 256字节 = 268字节。
  */
 #define BOOT_FRAME_MAX_SIZE       \
     (BOOT_FRAME_FIXED_SIZE + BOOT_FRAME_MAX_DATA_SIZE)
 
 /*
- * DATA在完整frame数组中的起始下标。
- * frame[0～1]为CMD，frame[2～3]为TOTAL_LEN，
- * 因此DATA从frame[4]开始。
+ * 通用字段在完整frame数组中的绝对偏移。
  */
-#define BOOT_FRAME_DATA_OFFSET         4U 
+#define BOOT_FRAME_SOF_OFFSET          0U
+#define BOOT_FRAME_CMD_OFFSET          BOOT_FRAME_SOF_SIZE
+#define BOOT_FRAME_LENGTH_OFFSET       \
+    (BOOT_FRAME_CMD_OFFSET + BOOT_FRAME_CMD_SIZE)
+#define BOOT_FRAME_DATA_OFFSET         \
+    (BOOT_FRAME_LENGTH_OFFSET + BOOT_FRAME_LENGTH_SIZE)
 
 /*
- * 只有收到CMD和TOTAL_LEN以后，
+ * 只有收到SOF、CMD和TOTAL_LEN以后，
  * 才能知道当前完整协议帧应该有多长。
  *
- * CMD 2字节 + TOTAL_LEN 2字节 = 4字节。
+ * SOF 2字节 + CMD 2字节 + TOTAL_LEN 2字节 = 6字节。
  */
-#define BOOT_FRAME_HEADER_SIZE       \
-    (BOOT_FRAME_CMD_SIZE + BOOT_FRAME_LENGTH_SIZE)
+#define BOOT_FRAME_PREFIX_SIZE       BOOT_FRAME_DATA_OFFSET
 
 /*
  * CMD_START_UPDATE命令的DATA布局：
@@ -75,26 +87,26 @@
 
 /*
  * START命令整帧长度：
- * 固定字段10字节 + START DATA 7字节 = 17字节。
+ * 固定字段12字节 + START DATA 7字节 = 19字节。
  */
 #define BOOT_START_FRAME_SIZE          \
     (BOOT_FRAME_FIXED_SIZE + BOOT_START_DATA_SIZE)
 
 /*
  * 升级目标在START DATA中的相对偏移。
- * 对应DATA[0]，在完整frame中对应frame[4]。
+ * 对应DATA[0]，在完整frame中对应frame[6]。
  */
 #define BOOT_START_TARGET_OFFSET       0U
 
 /*
  * BIN文件大小在START DATA中的相对偏移。
- * 占用DATA[1～4]，在完整frame中对应frame[5～8]。
+ * 占用DATA[1～4]，在完整frame中对应frame[7～10]。
  */
 #define BOOT_START_IMAGE_SIZE_OFFSET   1U
 
 /*
  * BIN整体CRC16在START DATA中的相对偏移。
- * 占用DATA[5～6]，在完整frame中对应frame[9～10]。
+ * 占用DATA[5～6]，在完整frame中对应frame[11～12]。
  */
 #define BOOT_START_IMAGE_CRC_OFFSET    5U
 
@@ -111,14 +123,14 @@
 
 /*
  * 最小DATA帧：
- * 固定10字节 + DATA 1字节 = 11字节。
+ * 固定12字节 + DATA 1字节 = 13字节。
  */
 #define BOOT_DATA_MIN_FRAME_SIZE   \
     (BOOT_FRAME_FIXED_SIZE + BOOT_DATA_MIN_DATA_SIZE)
 
 /*
  * 最大DATA帧：
- * 固定10字节 + DATA 256字节 = 266字节。
+ * 固定12字节 + DATA 256字节 = 268字节。
  */
 #define BOOT_DATA_MAX_FRAME_SIZE   \
     (BOOT_FRAME_FIXED_SIZE + BOOT_DATA_MAX_DATA_SIZE)
@@ -130,7 +142,7 @@
 
 /*
  * END整帧长度：
- * 固定部分10字节 + DATA 0字节 = 10字节。
+ * 固定部分12字节 + DATA 0字节 = 12字节。
  */
 #define BOOT_END_FRAME_SIZE      \
     (BOOT_FRAME_FIXED_SIZE + BOOT_END_DATA_SIZE)
@@ -153,7 +165,7 @@
 
 /*
  * 应答帧总长度：
- * 固定字段10字节 + DATA 4字节 = 14字节。
+ * 固定字段12字节 + DATA 4字节 = 16字节。
  */
 #define BOOT_RESPONSE_FRAME_SIZE           \
     (BOOT_FRAME_FIXED_SIZE +               \
@@ -161,15 +173,21 @@
 
 /*
  * 原始请求CMD在应答DATA中的相对偏移。
- * DATA[0～1]，对应完整帧frame[4～5]。
+ * DATA[0～1]，对应完整帧frame[6～7]。
  */
 #define BOOT_RESPONSE_REQUEST_CMD_OFFSET    0U
 
 /*
  * 结果码在应答DATA中的相对偏移。
- * DATA[2～3]，对应完整帧frame[6～7]。
+ * DATA[2～3]，对应完整帧frame[8～9]。
  */
 #define BOOT_RESPONSE_RESULT_OFFSET         2U
+
+/*应答帧的RESERVE和CRC绝对偏移，避免组帧时写死下标。*/
+#define BOOT_RESPONSE_RESERVE_OFFSET        \
+    (BOOT_FRAME_DATA_OFFSET + BOOT_RESPONSE_DATA_SIZE)
+#define BOOT_RESPONSE_CRC_OFFSET            \
+    (BOOT_RESPONSE_FRAME_SIZE - BOOT_FRAME_CRC_SIZE)
 
 
 /*
@@ -300,13 +318,13 @@ typedef struct
 
 typedef struct
 {
-    /*用来保存正在接收的完整协议帧，最大可以保存266字节。*/
+    /*用来保存正在接收的完整协议帧，最大可以保存268字节。*/
     uint8_t buffer[BOOT_FRAME_MAX_SIZE];
 
     /*当前已经放入buffer的字节数。*/
     uint16_t received_len;
 
-    /*从frame[2～3]解析出来的整帧目标长度，没收够前4字节时，该值为0。*/
+    /*从frame[4～5]解析出来的整帧目标长度，没收够前6字节时，该值为0。*/
     uint16_t expected_len;
 
     /*完整帧是否已经接收完成：0表示没有完成，1表示已经完成*/
@@ -432,7 +450,8 @@ void Boot_RxInit(Boot_RxContextTypeDef *context);
 /**
  * @brief 向协议帧接收器放入一个字节。
  *
- * 收到前4字节后解析整帧长度，
+ * 先在字节流中寻找0xAA、0x55，
+ * 收到前6字节后解析整帧长度，
  * 收到expected_len个字节后报告完整帧就绪。
  *
  * @param context 协议帧接收器地址。
@@ -459,8 +478,8 @@ uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context,uint8_t **frame, uint16_t
 /**
  * @brief 组装一张ACK或者NACK应答帧。
  *
- * 应答帧固定为14字节：
- * CMD(2) + LEN(2) + DATA(4)
+ * 应答帧固定为16字节：
+ * SOF(2) + CMD(2) + LEN(2) + DATA(4)
  * + RESERVE(4) + CRC(2)。
  *
  * @param frame        用于保存应答帧的数组。
@@ -470,7 +489,7 @@ uint8_t Boot_RxGetFrame(Boot_RxContextTypeDef *context,uint8_t **frame, uint16_t
  * @param result       请求处理结果码。
  * @param value        RESERVE附加值，例如包序号。
  *
- * @return 成功返回应答帧长度14，失败返回0。
+ * @return 成功返回应答帧长度16，失败返回0。
  */
 uint16_t Boot_BuildResponseFrame(
     uint8_t *frame,

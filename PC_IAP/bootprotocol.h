@@ -15,6 +15,19 @@
 class BootProtocol
 {
 public:
+    /*与STM32端完全一致的通用帧布局常量。*/
+    static constexpr quint8 SofByte0 = 0xAAU;
+    static constexpr quint8 SofByte1 = 0x55U;
+    static constexpr qsizetype SofSize = 2;
+    static constexpr qsizetype CommandOffset = 2;
+    static constexpr qsizetype LengthOffset = 4;
+    static constexpr qsizetype DataOffset = 6;
+    static constexpr qsizetype FrameCrcSize = 2;
+    static constexpr qsizetype FrameFixedSize = 12;
+    static constexpr qsizetype ResponseDataSize = 4;
+    static constexpr qsizetype ResponseFrameSize =
+        FrameFixedSize + ResponseDataSize;
+
     /*
      * 计算Modbus CRC16。
      * 算法和STM32中的
@@ -98,8 +111,11 @@ public:
     /* 构造END升级结束帧。*/
     static QByteArray buildEndFrame(quint32 packetCount);
 
-    /*解析一张固定14字节的ACK/NACK。*/
+    /*解析一张固定16字节的ACK/NACK。*/
     static bool parseResponse(const QByteArray &frame, ResponseInfo &response);
+
+    /*在串口字节流中寻找下一个0xAA、0x55帧头。*/
+    static qsizetype findSof(const QByteArray &buffer, qsizetype from = 0);
 
     /*将“1.2.3.4”转换为0x01020304*/
     static bool parseVersion(const QString &versionText,quint32 &versionValue);

@@ -414,13 +414,43 @@ void MainWindow::onSerialReadyRead()
     /* 读取本次已经到达的所有字节，
      * 追加到原有缓存末尾。*/
     responseBuffer.append(serialPort->readAll());
-    constexpr qsizetype responseFrameSize = 14;
 
-    /*数据不足14字节时先不解析，等下一次readyRead继续追加*/
-    while (responseBuffer.size() >= responseFrameSize)
+    while (!responseBuffer.isEmpty())
     {
-        /* 从缓存最前面取出一张14字节应答。*/
-        const QByteArray frame = responseBuffer.left(responseFrameSize);
+        /*先搜索固定SOF，帧头之前的串口噪声不参与解析。*/
+        const qsizetype sofIndex = BootProtocol::findSof(responseBuffer);
+
+        if (sofIndex < 0)
+        {
+            /*
+             * 缓存末尾的0xAA可能是跨两次readyRead的帧头第一字节，
+             * 其他无法组成SOF的字节都可以安全丢弃。
+             */
+            if (static_cast<quint8>(responseBuffer.back()) == BootProtocol::SofByte0)
+            {
+                responseBuffer = responseBuffer.right(1);
+            }
+            else
+            {
+                responseBuffer.clear();
+            }
+
+            break;
+        }
+
+        if (sofIndex > 0)
+        {
+            responseBuffer.remove(0, sofIndex);
+        }
+
+        /*一张ACK/NACK固定16字节，数据不足时等待下次readyRead。*/
+        if (responseBuffer.size() < BootProtocol::ResponseFrameSize)
+        {
+            break;
+        }
+
+        const QByteArray frame =
+            responseBuffer.left(BootProtocol::ResponseFrameSize);
 
         BootProtocol::ResponseInfo response;
 
@@ -431,9 +461,9 @@ void MainWindow::onSerialReadyRead()
                 QString::fromLatin1(frame.toHex(' ').toUpper()));
 
             /*
-             * 当前没有帧头字段。
-             * 解析失败时先移除一个字节，
-             * 尝试从下一个位置重新同步。
+             * 这一组SOF后面的应答内容非法。
+             * 只移除当前帧头的第一字节，
+             * 下一轮会继续寻找后续AA 55。
              */
             responseBuffer.remove(0, 1);
             continue;
@@ -441,9 +471,9 @@ void MainWindow::onSerialReadyRead()
 
         /*
          * 成功解析一张应答后，
-         * 从缓存中移除完整14字节。
+         * 从缓存中移除完整16字节。
          */
-        responseBuffer.remove(0,responseFrameSize);
+        responseBuffer.remove(0, BootProtocol::ResponseFrameSize);
 
         ui->plainTextEditLog->appendPlainText("[接收] " + QString::fromLatin1(frame.toHex(' ').toUpper()));
 

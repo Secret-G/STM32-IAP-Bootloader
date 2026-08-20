@@ -44,12 +44,11 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
 
     /*
      * 固定字段：
-     * CMD 2 + LEN 2 + RESERVE 4 + CRC 2
-     * 一共10字节。
+     * SOF 2 + CMD 2 + LEN 2 + RESERVE 4 + CRC 2
+     * 一共12字节。
      */
-    constexpr quint16 fixedSize = 10U;
-
-    const quint16 totalLength = static_cast<quint16>(fixedSize + data.size());
+    const quint16 totalLength =
+        static_cast<quint16>(FrameFixedSize + data.size());
 
     QByteArray frame;
 
@@ -59,17 +58,21 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
     frame.reserve(totalLength);
 
     /*
-     * frame[0～1]：CMD。
+     * frame[0～1]：固定SOF帧头。
      */
+    frame.append(static_cast<char>(SofByte0));
+    frame.append(static_cast<char>(SofByte1));
+
+    /*frame[2～3]：CMD。*/
     appendUint16LE(frame, command);
 
     /*
-     * frame[2～3]：完整帧总长度。
+     * frame[4～5]：完整帧总长度，包含SOF和CRC。
      */
     appendUint16LE(frame, totalLength);
 
     /*
-     * frame[4...]：DATA。
+     * frame[6...]：DATA。
      */
     frame.append(data);
 
@@ -80,7 +83,8 @@ QByteArray BootProtocol::buildFrame(quint16 command, const QByteArray &data, qui
 
     /*
      * 此时frame中还没有CRC，
-     * 因此直接计算当前所有字节即可。
+     * 因此直接计算当前所有字节即可，
+     * 计算范围包含SOF帧头。
      */
     const quint16 crc = crc16Modbus(frame);
 
@@ -167,18 +171,20 @@ QByteArray BootProtocol::buildEndFrame(quint32 packetCount)
 
 bool BootProtocol::parseResponse(const QByteArray &frame, ResponseInfo &response)
 {
-
-    /* ACK/NACK固定为14字节。*/
-    constexpr qsizetype responseFrameSize = 14;
-    constexpr qsizetype crcSize = 2;
-
-    if (frame.size() != responseFrameSize)
+    if (frame.size() != ResponseFrameSize)
     {
         return false;
     }
 
-    /* frame[0～1]：ACK或者NACK命令。*/
-    const quint16 responseCommand = readUint16LE(frame, 0);
+    /*frame[0～1]：固定SOF帧头。*/
+    if ((static_cast<quint8>(frame.at(0)) != SofByte0) ||
+        (static_cast<quint8>(frame.at(1)) != SofByte1))
+    {
+        return false;
+    }
+
+    /* frame[2～3]：ACK或者NACK命令。*/
+    const quint16 responseCommand = readUint16LE(frame, CommandOffset);
 
     if ((responseCommand != CmdAck) &&
         (responseCommand != CmdNack))
@@ -186,19 +192,21 @@ bool BootProtocol::parseResponse(const QByteArray &frame, ResponseInfo &response
         return false;
     }
 
-    /* frame[2～3]：应答帧声明的总长度。*/
-    const quint16 totalLength = readUint16LE(frame, 2);
+    /* frame[4～5]：应答帧声明的总长度。*/
+    const quint16 totalLength = readUint16LE(frame, LengthOffset);
 
-    if (totalLength != responseFrameSize)
+    if (totalLength != ResponseFrameSize)
     {
         return false;
     }
 
-    /* frame[12～13]：STM32发送的CRC。*/
-    const quint16 receivedCrc = readUint16LE(frame, 12);
+    const qsizetype crcOffset = ResponseFrameSize - FrameCrcSize;
 
-    /* Qt重新计算前12字节CRC。*/
-    const QByteArray crcData = frame.left(responseFrameSize - crcSize);
+    /* frame[14～15]：STM32发送的CRC。*/
+    const quint16 receivedCrc = readUint16LE(frame, crcOffset);
+
+    /*Qt重新计算包含SOF在内的前14字节CRC。*/
+    const QByteArray crcData = frame.left(crcOffset);
 
     const quint16 calculatedCrc = crc16Modbus(crcData);
 
@@ -210,16 +218,26 @@ bool BootProtocol::parseResponse(const QByteArray &frame, ResponseInfo &response
     /*所有基础检查成功后再填写输出结构体。*/
     response.responseCommand = responseCommand;
 
-    /*frame[4～5]：原始请求命令。*/
-    response.requestCommand = readUint16LE(frame, 4);
+    /*frame[6～7]：原始请求命令。*/
+    response.requestCommand = readUint16LE(frame, DataOffset);
 
-    /* frame[6～7]：处理结果码。*/
-    response.result = readUint16LE(frame, 6);
+    /* frame[8～9]：处理结果码。*/
+    response.result = readUint16LE(frame, DataOffset + 2);
 
-    /*frame[8～11]：RESERVE附加值。*/
-    response.value = readUint32LE(frame, 8);
+    /*frame[10～13]：RESERVE附加值。*/
+    response.value = readUint32LE(frame, DataOffset + ResponseDataSize);
 
     return true;
+}
+
+qsizetype BootProtocol::findSof(const QByteArray &buffer, qsizetype from)
+{
+    QByteArray sof;
+    sof.reserve(SofSize);
+    sof.append(static_cast<char>(SofByte0));
+    sof.append(static_cast<char>(SofByte1));
+
+    return buffer.indexOf(sof, from);
 }
 
 bool BootProtocol::parseVersion(const QString &versionText, quint32 &versionValue)

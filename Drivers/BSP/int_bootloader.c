@@ -93,7 +93,10 @@ void bootloader_init(void)
     __HAL_UART_CLEAR_IDLEFLAG(&huart1);
     __HAL_UART_CLEAR_OREFLAG(&huart1);
 
-    HAL_UARTEx_ReceiveToIdle_IT(&huart1, uart_rec_buff, BOOT_FRAME_MAX_SIZE);
+    HAL_UARTEx_ReceiveToIdle_IT(
+        &huart1,
+        uart_rec_buff,
+        (uint16_t)sizeof(uart_rec_buff));
 
     /*打开RTC Backup Register访问能力*/
     Boot_ConfirmInit();
@@ -349,7 +352,10 @@ static void Boot_ProtocolReceiveRestart(void)
     memset(uart_rec_buff, 0, sizeof(uart_rec_buff));
 
     /*重新开启UART空闲中断接收。*/
-    HAL_UARTEx_ReceiveToIdle_IT(&huart1, uart_rec_buff, BOOT_FRAME_MAX_SIZE);
+    HAL_UARTEx_ReceiveToIdle_IT(
+        &huart1,
+        uart_rec_buff,
+        (uint16_t)sizeof(uart_rec_buff));
 }
 
 /**
@@ -369,7 +375,7 @@ static HAL_StatusTypeDef Boot_SendResponse(
     uint8_t response_frame[BOOT_RESPONSE_FRAME_SIZE];
     uint16_t response_len;
 
-    /*根据应答内容构造完整的14字节协议帧。*/
+    /*根据应答内容构造完整的16字节协议帧。*/
     response_len = Boot_BuildResponseFrame(
         response_frame,
         sizeof(response_frame),
@@ -1210,11 +1216,17 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     {
         result = Boot_RxInputByte(&protocol_rx_context, uart_rec_buff[i]);
 
-        /*前4字节中的TOTAL_LEN非法。*/
+        /*找到SOF后，前6字节中的TOTAL_LEN非法。*/
         if (result == BOOT_RX_FRAME_ERROR)
         {
             protocol_rx_error_pending = 1U;
-            break;
+
+            /*
+             * 接收器已经回到搜索SOF的状态。
+             * 继续检查本次UART回调后续字节，
+             * 避免丢掉紧跟在错误帧后面的有效帧头。
+             */
+            continue;
         }
 
         /*已经接收到一张完整协议帧。*/
@@ -1235,7 +1247,10 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
     {
         memset(uart_rec_buff, 0, sizeof(uart_rec_buff));
 
-        HAL_UARTEx_ReceiveToIdle_IT(&huart1, uart_rec_buff, PACKET_DATA_SIZE);
+        HAL_UARTEx_ReceiveToIdle_IT(
+            &huart1,
+            uart_rec_buff,
+            (uint16_t)sizeof(uart_rec_buff));
     }
 }
 

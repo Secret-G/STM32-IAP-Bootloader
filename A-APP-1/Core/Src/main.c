@@ -97,10 +97,10 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
-  //MX_IWDG_Init();
+  MX_IWDG_Init();
   MX_USART6_UART_Init();
   /* USER CODE BEGIN 2 */
-	//App_TrialInit();
+	App_TrialInit();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -119,7 +119,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-		//App_TrialProcess();
+		App_TrialProcess();
   }
   /* USER CODE END 3 */
 }

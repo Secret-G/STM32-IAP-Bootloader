@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Drivers/BSP/boot_confirm;../Drivers/BSP/app_trial;../Drivers/BSP/tcp_server;../Drivers/BSP/app_update;../LWIP/App;../LWIP/Target;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/src/include/netif/ppp;../Middlewares/Third_Party/LwIP/src/include/lwip;../Middlewares/Third_Party/LwIP/src/include/lwip/apps;../Middlewares/Third_Party/LwIP/src/include/lwip/priv;../Middlewares/Third_Party/LwIP/src/include/lwip/prot;../Middlewares/Third_Party/LwIP/src/include/netif;../Middlewares/Third_Party/LwIP/src/include/compat/posix;../Middlewares/Third_Party/LwIP/src/include/compat/posix/arpa;../Middlewares/Third_Party/LwIP/src/include/compat/posix/net;../Middlewares/Third_Party/LwIP/src/include/compat/posix/sys;../Middlewares/Third_Party/LwIP/src/include/compat/stdc;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;..\Middlewares\Third_Party\FreeRTOS\Source\portable\GCC\ARM_CM4F;..\..\Common\FirmwareUpdate\boot_crc;..\..\Common\FirmwareUpdate\boot_protocol;..\..\Common\FirmwareUpdate\boot_flash</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Drivers/BSP/boot_confirm;../Drivers/BSP/app_trial;../Drivers/BSP/tcp_server;../Drivers/BSP/app_update;../LWIP/App;../LWIP/Target;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/src/include/netif/ppp;../Middlewares/Third_Party/LwIP/src/include/lwip;../Middlewares/Third_Party/LwIP/src/include/lwip/apps;../Middlewares/Third_Party/LwIP/src/include/lwip/priv;../Middlewares/Third_Party/LwIP/src/include/lwip/prot;../Middlewares/Third_Party/LwIP/src/include/netif;../Middlewares/Third_Party/LwIP/src/include/compat/posix;../Middlewares/Third_Party/LwIP/src/include/compat/posix/arpa;../Middlewares/Third_Party/LwIP/src/include/compat/posix/net;../Middlewares/Third_Party/LwIP/src/include/compat/posix/sys;../Middlewares/Third_Party/LwIP/src/include/compat/stdc;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;..\Middlewares\Third_Party\FreeRTOS\Source\portable\GCC\ARM_CM4F;..\..\Common\FirmwareUpdate\boot_crc;..\..\Common\FirmwareUpdate\boot_protocol;..\..\Common\FirmwareUpdate\boot_flash;..\..\Common\FirmwareUpdate\boot_cache;..\..\Common\FirmwareUpdate\boot_flag;..\..\Common\FirmwareUpdate\boot_flash</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -981,6 +981,21 @@
               <FileName>boot_protocol.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\Common\FirmwareUpdate\boot_protocol\boot_protocol.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_cache.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Common\FirmwareUpdate\boot_cache\boot_cache.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Common\FirmwareUpdate\boot_flash\boot_flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>boot_flag.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\Common\FirmwareUpdate\boot_flag\boot_flag.c</FilePath>
             </File>
           </Files>
         </Group>

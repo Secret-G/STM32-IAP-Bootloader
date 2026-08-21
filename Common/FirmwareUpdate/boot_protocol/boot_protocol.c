@@ -244,8 +244,6 @@ uint8_t Boot_ParseStartFrame(uint8_t *frame,uint16_t received_len,Boot_StartInfo
     start_info->target = target;
     start_info->image_size = Boot_ParseStartImageSize(frame);
     start_info->image_crc = Boot_ParseStartImageCRC(frame);
-
-    /*START帧的4字节RESERVE保存固件版本号。*/
     start_info->image_version = Boot_ParseReserve(frame, total_len);
 
     /*BIN文件长度不能为0*/

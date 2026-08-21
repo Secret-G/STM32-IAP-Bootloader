@@ -319,7 +319,6 @@ HAL_StatusTypeDef Boot_FlagWrite(Boot_FlagInfoTypeDef *flag_info)
 }
 
 HAL_StatusTypeDef Boot_FlagInit(void)
-
 {
     HAL_StatusTypeDef status;
     Boot_FlagInfoTypeDef copy0_info;

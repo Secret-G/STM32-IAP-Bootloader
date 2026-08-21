@@ -6,6 +6,7 @@
 #include <QSerialPort>
 #include <QByteArray>
 #include <QTimer>
+#include <QTcpSocket>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -25,6 +26,18 @@ private slots:
     void refreshSerialPorts();
     void toggleSerialPort();
     void selectBinFile();
+
+    /* 建立和断开APP网络升级连接。 */
+    void connectTcp();
+    void disconnectTcp();
+
+    /* 根据QTcpSocket状态更新连接界面。 */
+    void onTcpConnected();
+    void onTcpDisconnected();
+
+    /* 显示TCP连接或通信错误。 */
+    void onTcpErrorOccurred(QAbstractSocket::SocketError socketError);
+
 
     /*点击“开始升级”。*/
     void startUpgrade();
@@ -49,11 +62,17 @@ private:
 
     QSerialPort *serialPort;
 
+    /* APP网络升级使用的TCP连接。 */
+    QTcpSocket *tcpSocket = nullptr;
+
     /*保存从BIN文件读取出来的全部固件数据。*/
     QByteArray firmwareData;
 
     /*串口应答接收缓存。*/
     QByteArray responseBuffer;
+
+    /* TCP可能拆分或合并ACK，需要独立接收缓存。 */
+    QByteArray tcpResponseBuffer;
 
     /*当前正在发送或者等待ACK的DATA包序号。*/
     quint32 currentPacketSequence = 0U;

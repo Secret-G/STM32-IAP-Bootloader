@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1060</width>
-    <height>760</height>
+    <width>1041</width>
+    <height>680</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -137,7 +137,7 @@ QLabel#labelHint { color: #64748b; font-size: 12px; }
 QStatusBar { color: #475569; background: #eef2f7; }</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QVBoxLayout" name="verticalLayoutRoot">
+   <layout class="QVBoxLayout" name="verticalLayoutRoot" stretch="0,0,0,1">
     <property name="spacing">
      <number>12</number>
     </property>
@@ -161,6 +161,12 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
         <height>86</height>
        </size>
       </property>
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>86</height>
+       </size>
+      </property>
       <layout class="QHBoxLayout" name="horizontalLayoutHeader">
        <property name="leftMargin">
         <number>24</number>
@@ -171,20 +177,20 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
        <item>
         <layout class="QVBoxLayout" name="verticalLayoutHeaderText">
          <item>
+          <widget class="QLabel" name="labelTitle">
+           <property name="text">
+            <string>STM32 IAP 固件升级工具</string>
+           </property>
+          </widget>
+         </item>
+         <item>
           <widget class="QLabel" name="labelSubtitle">
            <property name="text">
-            <string/>
+            <string>UART恢复升级 · TCP网络升级</string>
            </property>
           </widget>
          </item>
         </layout>
-       </item>
-       <item>
-        <widget class="QLabel" name="labelTitle">
-         <property name="text">
-          <string>STM32 IAP 固件升级工具</string>
-         </property>
-        </widget>
        </item>
        <item>
         <spacer name="horizontalSpacerHeader">
@@ -201,8 +207,14 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
        </item>
        <item>
         <widget class="QLabel" name="labelConnectionStatus">
+         <property name="minimumSize">
+          <size>
+           <width>126</width>
+           <height>54</height>
+          </size>
+         </property>
          <property name="text">
-          <string>● 串口未连接</string>
+          <string>● 设备未连接</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignmentFlag::AlignCenter</set>
@@ -213,237 +225,341 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
      </widget>
     </item>
     <item>
-     <widget class="QGroupBox" name="groupBoxSerial">
-      <property name="title">
-       <string>串口连接</string>
+     <widget class="QWidget" name="widgetConnectionArea" native="true">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
       </property>
-      <layout class="QHBoxLayout" name="horizontalLayoutSerial">
-       <property name="leftMargin">
-        <number>16</number>
-       </property>
-       <property name="rightMargin">
-        <number>16</number>
-       </property>
-       <property name="bottomMargin">
-        <number>14</number>
-       </property>
-       <item>
-        <widget class="QLabel" name="labelPort">
-         <property name="text">
-          <string>协议串口</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="comboBoxPort">
-         <property name="minimumSize">
-          <size>
-           <width>180</width>
-           <height>36</height>
-          </size>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButtonRefreshPort">
-         <property name="text">
-          <string>刷新串口</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="horizontalSpacerSerial">
-         <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>30</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QLabel" name="labelBaudRate">
-         <property name="text">
-          <string>波特率</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="comboBoxBaudRate">
-         <property name="minimumSize">
-          <size>
-           <width>135</width>
-           <height>36</height>
-          </size>
-         </property>
-         <property name="currentIndex">
-          <number>2</number>
-         </property>
-         <item>
-          <property name="text">
-           <string>9600</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>57600</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>115200</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>460800</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>921600</string>
-          </property>
-         </item>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="pushButtonOpenSerial">
-         <property name="minimumSize">
-          <size>
-           <width>118</width>
-           <height>36</height>
-          </size>
-         </property>
-         <property name="text">
-          <string>打开串口</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </widget>
-    </item>
-    <item>
-     <widget class="QGroupBox" name="groupBoxFirmware">
-      <property name="title">
-       <string>固件设置</string>
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>176</height>
+       </size>
       </property>
-      <layout class="QGridLayout" name="gridLayoutFirmware">
-       <property name="leftMargin">
-        <number>16</number>
-       </property>
-       <property name="rightMargin">
-        <number>16</number>
-       </property>
-       <property name="bottomMargin">
-        <number>14</number>
-       </property>
+      <layout class="QHBoxLayout" name="horizontalLayoutConnectionArea" stretch="3,4,5">
        <property name="spacing">
         <number>12</number>
        </property>
-       <item row="1" column="1">
-        <widget class="QLineEdit" name="lineEditFirmwareVersion">
-         <property name="placeholderText">
-          <string>1.0.0.0</string>
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QGroupBox" name="groupBoxSerial">
+         <property name="title">
+          <string>UART恢复连接</string>
          </property>
+         <layout class="QGridLayout" name="gridLayoutSerial" columnstretch="0,1,0">
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>14</number>
+          </property>
+          <property name="horizontalSpacing">
+           <number>8</number>
+          </property>
+          <property name="verticalSpacing">
+           <number>10</number>
+          </property>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelPort">
+            <property name="text">
+             <string>协议串口</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="comboBoxPort">
+            <property name="minimumSize">
+             <size>
+              <width>90</width>
+              <height>36</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QPushButton" name="pushButtonRefreshPort">
+            <property name="minimumSize">
+             <size>
+              <width>88</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>刷新串口</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelBaudRate">
+            <property name="text">
+             <string>波特率</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="comboBoxBaudRate">
+            <property name="minimumSize">
+             <size>
+              <width>90</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="currentIndex">
+             <number>2</number>
+            </property>
+            <item>
+             <property name="text">
+              <string>9600</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>57600</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>115200</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>460800</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>921600</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="QPushButton" name="pushButtonOpenSerial">
+            <property name="minimumSize">
+             <size>
+              <width>88</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>打开串口</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
-       <item row="0" column="6">
-        <widget class="QPushButton" name="pushButtonBrowseBin">
-         <property name="text">
-          <string>选择文件...</string>
+       <item>
+        <widget class="QGroupBox" name="groupBoxTcpConnection">
+         <property name="title">
+          <string>TCP/IP网络连接</string>
          </property>
+         <layout class="QGridLayout" name="gridLayoutTcp" columnstretch="0,1,0">
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>14</number>
+          </property>
+          <property name="horizontalSpacing">
+           <number>8</number>
+          </property>
+          <property name="verticalSpacing">
+           <number>10</number>
+          </property>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelTcpIp">
+            <property name="text">
+             <string>目标IP</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="lineEditTcpIp">
+            <property name="minimumSize">
+             <size>
+              <width>100</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>192.168.10.2</string>
+            </property>
+            <property name="placeholderText">
+             <string>192.168.10.2</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="2">
+           <widget class="QPushButton" name="pushButtonTcpConnect">
+            <property name="minimumSize">
+             <size>
+              <width>88</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>连接TCP</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelTcpPort">
+            <property name="text">
+             <string>目标端口</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QSpinBox" name="spinBoxTcpPort">
+            <property name="minimumSize">
+             <size>
+              <width>100</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="minimum">
+             <number>1</number>
+            </property>
+            <property name="maximum">
+             <number>65535</number>
+            </property>
+            <property name="value">
+             <number>5000</number>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="2">
+           <widget class="QPushButton" name="pushButtonTcpDisconnect">
+            <property name="enabled">
+             <bool>false</bool>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>88</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>断开TCP</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
-       <item row="0" column="1" colspan="5">
-        <widget class="QLineEdit" name="lineEditBinPath">
-         <property name="readOnly">
-          <bool>true</bool>
+       <item>
+        <widget class="QGroupBox" name="groupBoxFirmware">
+         <property name="title">
+          <string>固件设置</string>
          </property>
-         <property name="placeholderText">
-          <string>请选择按运行区地址 0x08020000 编译生成的 BIN 文件</string>
-         </property>
+         <layout class="QGridLayout" name="gridLayoutFirmware" columnstretch="0,1,0,1,0">
+          <property name="leftMargin">
+           <number>14</number>
+          </property>
+          <property name="rightMargin">
+           <number>14</number>
+          </property>
+          <property name="bottomMargin">
+           <number>14</number>
+          </property>
+          <property name="spacing">
+           <number>8</number>
+          </property>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelBinFile">
+            <property name="text">
+             <string>BIN文件</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1" colspan="3">
+           <widget class="QLineEdit" name="lineEditBinPath">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+            <property name="placeholderText">
+             <string>请选择链接地址为 0x08020000 的 APP BIN 文件</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="4">
+           <widget class="QPushButton" name="pushButtonBrowseBin">
+            <property name="minimumSize">
+             <size>
+              <width>96</width>
+              <height>36</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>选择文件...</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelversion">
+            <property name="text">
+             <string>固件版本</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1" colspan="2">
+           <widget class="QLineEdit" name="lineEditFirmwareVersion">
+            <property name="placeholderText">
+             <string>1.0.0.0</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelFileSize">
+            <property name="text">
+             <string>文件大小</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="labelFileSizeValue">
+            <property name="text">
+             <string>-- 字节</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="2">
+           <widget class="QLabel" name="labelFileCrc">
+            <property name="text">
+             <string>文件CRC</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="3" colspan="2">
+           <widget class="QLabel" name="labelFileCrcValue">
+            <property name="text">
+             <string>0x----</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
-       </item>
-       <item row="0" column="0">
-        <widget class="QLabel" name="labelBinFile">
-         <property name="text">
-          <string>BIN文件</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="0">
-        <widget class="QLabel" name="labelversion">
-         <property name="text">
-          <string>固件版本：</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="6">
-        <layout class="QHBoxLayout" name="horizontalLayoutFileCrc">
-         <item>
-          <widget class="QLabel" name="labelFileCrc">
-           <property name="text">
-            <string>文件CRC</string>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="QLabel" name="labelFileCrcValue">
-           <property name="text">
-            <string>0x----</string>
-           </property>
-          </widget>
-         </item>
-        </layout>
-       </item>
-       <item row="1" column="3">
-        <spacer name="horizontalSpacer">
-         <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>40</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item row="1" column="5">
-        <widget class="QLabel" name="labelFileSizeValue">
-         <property name="minimumSize">
-          <size>
-           <width>110</width>
-           <height>0</height>
-          </size>
-         </property>
-         <property name="text">
-          <string>-- 字节</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="4">
-        <widget class="QLabel" name="labelFileSize">
-         <property name="text">
-          <string>文件大小</string>
-         </property>
-        </widget>
-       </item>
-       <item row="1" column="2">
-        <spacer name="horizontalSpacer_2">
-         <property name="orientation">
-          <enum>Qt::Orientation::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>40</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
        </item>
       </layout>
      </widget>
@@ -595,7 +711,7 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
          <item>
           <widget class="QLabel" name="labelHint">
            <property name="text">
-            <string>提示：USART1由本工具独占；USART2调试日志可继续使用SSCOM查看。</string>
+            <string>UART用于Bootloader恢复升级；TCP用于APP网络升级；USART6继续输出设备调试日志。</string>
            </property>
           </widget>
          </item>
@@ -629,12 +745,6 @@ QStatusBar { color: #475569; background: #eef2f7; }</string>
   <widget class="QStatusBar" name="statusbar"/>
  </widget>
  <tabstops>
-  <tabstop>comboBoxPort</tabstop>
-  <tabstop>pushButtonRefreshPort</tabstop>
-  <tabstop>comboBoxBaudRate</tabstop>
-  <tabstop>pushButtonOpenSerial</tabstop>
-  <tabstop>lineEditBinPath</tabstop>
-  <tabstop>pushButtonBrowseBin</tabstop>
   <tabstop>pushButtonStartUpgrade</tabstop>
   <tabstop>pushButtonCancelUpgrade</tabstop>
   <tabstop>plainTextEditLog</tabstop>

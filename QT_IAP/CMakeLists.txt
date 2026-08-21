@@ -5,6 +5,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
     Core
     Widgets
     SerialPort
+    Network
 )
 
 qt_standard_project_setup()
@@ -24,6 +25,7 @@ target_link_libraries(PC_IAP
         Qt::Core
         Qt::Widgets
         Qt::SerialPort
+        Qt::Network
 )
 
 install(TARGETS PC_IAP

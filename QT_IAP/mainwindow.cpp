@@ -4,19 +4,34 @@
 
 #include <QFile>
 #include <QFileDialog>
+#include <QHostAddress>
+#include <QNetworkProxy>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , serialPort(new QSerialPort(this))
+    , tcpSocket(new QTcpSocket(this))
     , ackTimer(new QTimer(this))
 {
     ui->setupUi(this);
+
+    /* STM32位于局域网，TCP连接不经过系统代理。 */
+    tcpSocket->setProxy(QNetworkProxy::NoProxy);
 
     connect(ui->pushButtonRefreshPort, &QPushButton::clicked, this, &MainWindow::refreshSerialPorts);
 
     /*打开/关闭串口按钮。*/
     connect(ui->pushButtonOpenSerial, &QPushButton::clicked, this, &MainWindow::toggleSerialPort);
+
+    /* TCP连接和断开按钮。 */
+    connect(ui->pushButtonTcpConnect,&QPushButton::clicked,this,&MainWindow::connectTcp);
+    connect(ui->pushButtonTcpDisconnect,&QPushButton::clicked,this,&MainWindow::disconnectTcp);
+
+    /* QTcpSocket状态变化。 */
+    connect(tcpSocket,&QTcpSocket::connected,this,&MainWindow::onTcpConnected);
+    connect(tcpSocket,&QTcpSocket::disconnected,this,&MainWindow::onTcpDisconnected);
+    connect(tcpSocket,&QTcpSocket::errorOccurred,this,&MainWindow::onTcpErrorOccurred);
 
     /*选择BIN文件按钮。*/
     connect(ui->pushButtonBrowseBin, &QPushButton::clicked, this, &MainWindow::selectBinFile);
@@ -264,6 +279,179 @@ void MainWindow::selectBinFile()
      */
     ui->pushButtonStartUpgrade->setEnabled(serialPort->isOpen());
 }
+
+/*开始尝试连接*/
+void MainWindow::connectTcp()
+{
+    if(serialPort->isOpen())
+    {
+        ui->plainTextEditLog->appendPlainText("[TCP] 请先关闭UART连接");
+        return;
+    }
+
+    if(tcpSocket->state() != QAbstractSocket::UnconnectedState)
+    {
+        ui->plainTextEditLog->appendPlainText("[TCP] 当前已经连接或正在连接");
+        return;
+    }
+
+    /*获取ip*/
+    const QString ipText = ui->lineEditTcpIp->text().trimmed();
+
+    QHostAddress address;
+
+    if (!address.setAddress(ipText))
+    {
+        ui->labelConnectionStatus->setText("● TCP地址无效");
+        ui->plainTextEditLog->appendPlainText(QString("[TCP] IP地址格式错误：%1").arg(ipText));
+
+        return;
+    }
+
+    /*获取端口*/
+    const quint16 port = static_cast<quint16>(ui->spinBoxTcpPort->value());
+
+    /*清楚TCP的缓冲区*/
+    tcpResponseBuffer.clear();
+
+
+    ui->lineEditTcpIp->setEnabled(false);
+    ui->spinBoxTcpPort->setEnabled(false);
+    ui->pushButtonTcpConnect->setEnabled(false);
+    ui->pushButtonTcpDisconnect->setEnabled(true);
+
+    ui->labelConnectionStatus->setText("● TCP正在连接");
+
+    ui->labelConnectionStatus->setStyleSheet(
+        "color: #92400e;"
+        "background: #fef3c7;"
+        "border-radius: 13px;"
+        "padding: 5px 13px;"
+        "font-weight: 600;");
+
+    ui->plainTextEditLog->appendPlainText(QString("[TCP] 正在连接 %1:%2").arg(ipText).arg(port));
+
+    /*连接*/
+    tcpSocket->connectToHost(address, port);
+
+}
+
+void MainWindow::disconnectTcp()
+{
+    if (tcpSocket->state() ==QAbstractSocket::UnconnectedState)
+    {
+        return;
+    }
+
+    ui->plainTextEditLog->appendPlainText("[TCP] 正在断开连接");
+
+    tcpSocket->disconnectFromHost();
+}
+
+void MainWindow::onTcpConnected()
+{
+    //获取对方的ip和端口
+    const QString peerAddress = tcpSocket->peerAddress().toString();
+    const quint16 peerPort = tcpSocket->peerPort();
+
+    ui->pushButtonTcpConnect->setEnabled(false);
+    ui->pushButtonTcpDisconnect->setEnabled(true);
+
+    /*
+     * 当前只允许一个升级通道，TCP连接后锁定UART。
+     */
+    ui->comboBoxPort->setEnabled(false);
+    ui->comboBoxBaudRate->setEnabled(false);
+    ui->pushButtonRefreshPort->setEnabled(false);
+    ui->pushButtonOpenSerial->setEnabled(false);
+
+    ui->labelConnectionStatus->setText("● TCP已连接");
+
+    ui->labelConnectionStatus->setStyleSheet(
+        "color: #166534;"
+        "background: #dcfce7;"
+        "border-radius: 13px;"
+        "padding: 5px 13px;"
+        "font-weight: 600;");
+
+    ui->plainTextEditLog->appendPlainText(
+        QString("[TCP] 已连接 %1:%2")
+            .arg(peerAddress)
+            .arg(peerPort));
+
+    /*
+     * TCP升级发送尚未接入，暂时不能点击开始升级。
+     */
+    ui->pushButtonStartUpgrade->setEnabled(false);
+}
+
+void MainWindow::onTcpDisconnected()
+{
+    tcpResponseBuffer.clear();
+
+    ui->lineEditTcpIp->setEnabled(true);
+    ui->spinBoxTcpPort->setEnabled(true);
+    ui->pushButtonTcpConnect->setEnabled(true);
+    ui->pushButtonTcpDisconnect->setEnabled(false);
+
+    /* TCP断开后恢复UART连接控件。 */
+    ui->comboBoxPort->setEnabled(true);
+    ui->comboBoxBaudRate->setEnabled(true);
+    ui->pushButtonRefreshPort->setEnabled(true);
+
+    const bool hasSerialPort =!ui->comboBoxPort->currentData().toString().isEmpty();
+
+    ui->pushButtonOpenSerial->setEnabled(hasSerialPort);
+
+    ui->pushButtonStartUpgrade->setEnabled(false);
+
+    ui->labelConnectionStatus->setText("● 设备未连接");
+
+    ui->labelConnectionStatus->setStyleSheet(
+        "color: #334155;"
+        "background: #e2e8f0;"
+        "border-radius: 13px;"
+        "padding: 5px 13px;"
+        "font-weight: 600;");
+
+    ui->plainTextEditLog->appendPlainText("[TCP] 连接已断开");
+}
+
+void MainWindow::onTcpErrorOccurred(QAbstractSocket::SocketError socketError)
+{
+    Q_UNUSED(socketError);
+
+    ui->plainTextEditLog->appendPlainText(
+        QString("[TCP] 错误：%1")
+            .arg(tcpSocket->errorString()));
+
+    ui->labelConnectionStatus->setText("● TCP连接失败");
+
+    ui->labelConnectionStatus->setStyleSheet(
+        "color: #991b1b;"
+        "background: #fee2e2;"
+        "border-radius: 13px;"
+        "padding: 5px 13px;"
+        "font-weight: 600;");
+
+    if (tcpSocket->state() == QAbstractSocket::UnconnectedState)
+    {
+        ui->lineEditTcpIp->setEnabled(true);
+        ui->spinBoxTcpPort->setEnabled(true);
+        ui->pushButtonTcpConnect->setEnabled(true);
+        ui->pushButtonTcpDisconnect->setEnabled(false);
+
+        ui->comboBoxPort->setEnabled(true);
+        ui->comboBoxBaudRate->setEnabled(true);
+        ui->pushButtonRefreshPort->setEnabled(true);
+
+        const bool hasSerialPort =!ui->comboBoxPort->currentData().toString().isEmpty();
+
+        ui->pushButtonOpenSerial->setEnabled(hasSerialPort);
+    }
+}
+
+
 
 void MainWindow::startUpgrade()
 {
